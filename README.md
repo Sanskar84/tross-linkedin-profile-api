@@ -177,14 +177,15 @@ card even though the corresponding details page contains data:
   `com.linkedin.sdui.pagers.profile.details.projects` request to LinkedIn's SDUI
   pagination action. Project rows are separated by LinkedIn's divider elements
   and normalized into title, description, external URL, summarized skills, and
-  optional dates.
+  optional dates. When the profile card has no full-detail link, its nested
+  semantic `Projects` card is still parsed and preserved as the preview result.
 - Certifications and Courses: validated `/details/certifications/` and
   `/details/courses/` links trigger direct GETs, followed by their embedded
   `profile.details.certifications` and `profile.details.courses` pagers.
   Certifications preserve issuer, displayed issue/expiry dates, credential ID,
   and credential URL. Courses preserve the displayed course name and number.
-  Some of these pagers omit an explicit next descriptor; after a full page the
-  service advances the embedded `start` by its embedded `count`, stopping on a
+  Some pagers omit an explicit next descriptor; after a full page the service
+  advances the embedded `start` by its embedded `count`, stopping on a
   short/empty page with the same duplicate-cursor and 20-page bounds.
 - Recommendations: Part 2 triggers a direct GET of
   `/in/<vanity>/details/recommendations/`. The service separately forwards the
@@ -208,10 +209,10 @@ card even though the corresponding details page contains data:
 
 Every pagination response is parsed with the same React Flight parser.
 Embedded next-page requests are followed with duplicate-cursor detection and a
-bounded page limit. For the two list pagers documented above, a missing next
-descriptor after a full page is advanced from LinkedIn's own `start` and `count`
-values. Results are deduplicated while preserving LinkedIn's order. Member IDs
-and pagination tokens are never guessed or hardcoded.
+bounded page limit. Across list sections, a missing next descriptor after a full
+page is advanced from LinkedIn's own `start` and `count` values. Results are
+deduplicated while preserving LinkedIn's order. Member IDs and pagination tokens
+are never guessed or hardcoded.
 
 ### 6. Normalize irregular profile data
 
@@ -221,6 +222,9 @@ language rows may have an unknown proficiency label or no proficiency. The
 normalizers preserve these partial records instead of dropping them. Experience
 normalization supports both standalone roles and grouped company cards, along
 with month-specific or year-only date ranges using hyphens or en dashes.
+Semantic cards may be nested inside generated UUID wrappers and may place their
+actual UI under `initialContent` instead of `children`; root discovery and text
+extraction support both structures consistently.
 
 The implementation does not hardcode a `queryId` or depend on a separately
 extracted `nonIterableProfileId`; it forwards the payload LinkedIn embeds in the

@@ -823,6 +823,29 @@ def test_extract_about_from_component_flight_stream() -> None:
     )
 
 
+def test_extract_about_from_deferred_component_content() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":'
+                    '[["$","section",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.card.memberAbout",'
+                    '"initialContent":"$L1"}]]}]'
+                ),
+                (
+                    '1:["$","div",null,{"children":'
+                    '["$L2","$L3"]}]'
+                ),
+                '2:["$","h2",null,{"children":["About"]}]',
+                '3:["$","p",null,{"children":["Deferred summary"]}]',
+            ]
+        )
+    )
+
+    assert extract_about_from_flight(document) == "Deferred summary"
+
+
 def test_extract_certifications_from_component_flight_stream() -> None:
     document = parse_flight_stream(
         flight_stream(
@@ -981,6 +1004,63 @@ def test_extract_languages_from_component_flight_stream() -> None:
         {"name": "English", "proficiency": "Full professional proficiency"},
         {"name": "Hindi", "proficiency": "Native or bilingual proficiency"},
         {"name": "French", "proficiency": "Advanced professional proficiency"},
+    ]
+
+
+def test_extract_languages_from_deferred_component_rows() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":'
+                    '[["$","section",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.card.memberLanguageTopLevel",'
+                    '"initialContent":["$L1","$L4"]}]]}]'
+                ),
+                '1:["$","div",null,{"initialContent":["$L2","$L3"]}]',
+                '2:["$","span",null,{"children":["English"]}]',
+                (
+                    '3:["$","span",null,{"children":'
+                    '["Professional working proficiency"]}]'
+                ),
+                '4:["$","div",null,{"initialContent":["$L5","$L6"]}]',
+                '5:["$","span",null,{"children":["Hindi"]}]',
+                (
+                    '6:["$","span",null,{"children":'
+                    '["Native or bilingual proficiency"]}]'
+                ),
+            ]
+        )
+    )
+
+    assert [item.model_dump() for item in extract_languages_from_flight(document)] == [
+        {"name": "English", "proficiency": "Professional working proficiency"},
+        {"name": "Hindi", "proficiency": "Native or bilingual proficiency"},
+    ]
+
+
+def test_extract_projects_from_deferred_rows() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","section",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.card.memberProjects",'
+                    '"initialContent":["$L1","$L4","$L5"]}]'
+                ),
+                '1:["$","div",null,{"initialContent":["$L2","$L3"]}]',
+                '2:["$","span",null,{"children":["Password Generator"]}]',
+                '3:["$","p",null,{"children":["Built with JavaScript"]}]',
+                '4:["$","hr",null,{}]',
+                '5:["$","div",null,{"initialContent":"$L6"}]',
+                '6:["$","span",null,{"children":["Simon Game"]}]',
+            ]
+        )
+    )
+
+    assert [item.title for item in extract_projects_from_flight(document)] == [
+        "Password Generator",
+        "Simon Game",
     ]
 
 
@@ -1649,6 +1729,61 @@ async def test_ssr_client_replaces_certification_and_course_previews_with_all_pa
 
 
 @pytest.mark.asyncio
+async def test_ssr_client_preserves_projects_when_preview_has_no_detail_link() -> None:
+    profile_html = hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Ada","familyName":"Lovelace"}},'
+                '"requests":[{"$type":"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":'
+                '"com.linkedin.profileCardsBelowActivityPart1WithoutExp",'
+                '"requestedArguments":{}}]}]'
+            ),
+        ]
+    )
+
+    class FakeTransport:
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(profile_html, "text/html", len(profile_html))
+
+    class FakeComponentTransport:
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            del request
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        (
+                            '0:["$","section",null,{"componentKey":'
+                            '"com.linkedin.sdui.profile.card.memberProjects",'
+                            '"initialContent":"$L1"}]'
+                        ),
+                        '1:["$","div",null,{"initialContent":"$L2"}]',
+                        '2:["$","span",null,{"children":["Analytical Engine"]}]',
+                    ]
+                )
+            )
+
+    profile = await SsrLinkedInProfileClient(
+        FakeTransport(),
+        FakeComponentTransport(),
+    ).fetch_profile(
+        ProfileRequest(profile_url="https://www.linkedin.com/in/ada-lovelace/")
+    )
+
+    assert [item.title for item in profile.projects] == ["Analytical Engine"]
+
+
+@pytest.mark.asyncio
 async def test_ssr_client_replaces_skill_preview_with_all_paginated_skills() -> None:
     profile_html = hydration_html(
         [
@@ -1674,20 +1809,10 @@ async def test_ssr_client_replaces_skill_preview_with_all_paginated_skills() -> 
                 "vanityName": "ada-lovelace",
                 "profileId": "member-id",
                 "start": 0,
-                "count": 2,
+                "count": 1,
                 "filter": "ProfileSkillCategory_ALL",
             },
             "requestMetadata": {"$type": "proto.sdui.common.RequestMetadata"},
-        },
-    }
-    next_request_raw = {
-        **first_request_raw,
-        "requestedArguments": {
-            **first_request_raw["requestedArguments"],
-            "payload": {
-                **first_request_raw["requestedArguments"]["payload"],
-                "start": 2,
-            },
         },
     }
     details_html = hydration_html([f"0:{json.dumps(first_request_raw)}"])
@@ -1757,6 +1882,10 @@ async def test_ssr_client_replaces_skill_preview_with_all_paginated_skills() -> 
             start = payload["start"]
             assert isinstance(start, int)
             self.starts.append(start)
+            if start >= 2:
+                return parse_flight_stream(
+                    flight_stream(['0:["$","div",null,{"children":[]}]'])
+                )
             records = [
                 (
                     '0:["$","div",null,{"componentKey":'
@@ -1768,8 +1897,6 @@ async def test_ssr_client_replaces_skill_preview_with_all_paginated_skills() -> 
                     f'["{"Python" if start == 0 else "Pydantic"}"]}}]'
                 ),
             ]
-            if start == 0:
-                records.append(f"2:{json.dumps(next_request_raw)}")
             return parse_flight_stream(flight_stream(records))
 
     transport = FakeTransport()
@@ -1790,7 +1917,7 @@ async def test_ssr_client_replaces_skill_preview_with_all_paginated_skills() -> 
         ("ada-lovelace", "skills"),
         ("ada-lovelace", "education"),
     ]
-    assert pagination_transport.starts == [0, 2]
+    assert pagination_transport.starts == [0, 1, 2]
 
 
 @pytest.mark.asyncio

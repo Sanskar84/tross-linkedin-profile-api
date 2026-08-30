@@ -189,6 +189,7 @@ class SsrLinkedInProfileClient:
                     )
                 else:
                     updates["certifications"] = preview_certifications
+                preview_projects = extract_projects_from_flight(component)
                 projects_path = extract_profile_details_path(component, "projects")
                 if (
                     projects_path
@@ -199,6 +200,8 @@ class SsrLinkedInProfileClient:
                     updates["projects"] = await self._fetch_all_projects(
                         request.public_identifier
                     )
+                else:
+                    updates["projects"] = preview_projects
             elif component_id.endswith("profileCardsBelowActivityPart2"):
                 if (
                     has_recommendations_section(component)
@@ -324,10 +327,16 @@ class SsrLinkedInProfileClient:
                 pagination_request,
                 EDUCATION_SCREEN_ID,
             )
-            for item in extract_education_from_flight(page):
+            page_items = extract_education_from_flight(page)
+            for item in page_items:
                 if item not in education:
                     education.append(item)
             next_request = extract_education_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
             if next_request is None:
                 return education or inline_education
             pagination_request = next_request
@@ -377,11 +386,17 @@ class SsrLinkedInProfileClient:
                 pagination_request,
                 PROJECTS_SCREEN_ID,
             )
-            for project in extract_projects_from_flight(page):
+            page_items = extract_projects_from_flight(page)
+            for project in page_items:
                 if project.title not in seen_titles:
                     seen_titles.add(project.title)
                     projects.append(project)
             next_request = extract_projects_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
             if next_request is None:
                 return projects
             pagination_request = next_request
@@ -498,10 +513,16 @@ class SsrLinkedInProfileClient:
                 pagination_request,
                 PUBLICATIONS_SCREEN_ID,
             )
-            for publication in extract_publications_from_flight(page):
+            page_items = extract_publications_from_flight(page)
+            for publication in page_items:
                 if publication not in publications:
                     publications.append(publication)
             next_request = extract_publications_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
             if next_request is None:
                 return publications or inline_publications or preview_publications
             pagination_request = next_request
@@ -534,10 +555,16 @@ class SsrLinkedInProfileClient:
                 pagination_request,
                 TEST_SCORES_SCREEN_ID,
             )
-            for score in extract_test_scores_from_flight(page):
+            page_items = extract_test_scores_from_flight(page)
+            for score in page_items:
                 if score not in scores:
                     scores.append(score)
             next_request = extract_test_scores_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
             if next_request is None:
                 return scores or inline_scores or preview_scores
             pagination_request = next_request
@@ -575,10 +602,11 @@ class SsrLinkedInProfileClient:
                     pagination_request,
                     RECOMMENDATIONS_SCREEN_ID,
                 )
-                for recommendation in extract_recommendations_from_flight(
+                page_items = extract_recommendations_from_flight(
                     page,
                     recommendation_type,
-                ):
+                )
+                for recommendation in page_items:
                     if recommendation not in recommendations:
                         recommendations.append(recommendation)
                 next_requests = extract_recommendations_pagination_requests(page)
@@ -590,6 +618,11 @@ class SsrLinkedInProfileClient:
                     ),
                     None,
                 )
+                if next_request is None:
+                    next_request = _advance_full_page_request(
+                        pagination_request,
+                        len(page_items),
+                    )
                 if next_request is None:
                     break
                 pagination_request = next_request
@@ -644,11 +677,17 @@ class SsrLinkedInProfileClient:
                 pagination_request,
                 SKILLS_SCREEN_ID,
             )
-            for skill in extract_skills_from_flight(page):
+            page_items = extract_skills_from_flight(page)
+            for skill in page_items:
                 if skill not in skills:
                     skills.append(skill)
 
             next_request = extract_skills_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
             if next_request is None:
                 return skills or preview_skills
             pagination_request = next_request

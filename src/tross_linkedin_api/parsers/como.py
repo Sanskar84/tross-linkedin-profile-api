@@ -775,7 +775,11 @@ def extract_projects_from_flight(document: ComoFlightDocument) -> list[Project]:
 
     projects: list[Project] = []
     seen_titles: set[str] = set()
-    for root in document.records.values():
+    project_roots = _component_roots(document, "Projects")
+    roots: Iterable[JSONValue] = (
+        project_roots if project_roots else document.records.values()
+    )
+    for root in roots:
         resolved_root = _resolve_references(root, document)
         for value in _walk(resolved_root):
             if not isinstance(value, list) or _is_react_element(value):
@@ -792,7 +796,7 @@ def extract_projects_from_flight(document: ComoFlightDocument) -> list[Project]:
                 return projects
 
     # A single-project response has no divider, so parse its content container.
-    for root in document.records.values():
+    for root in roots:
         resolved_root = _resolve_references(root, document)
         project = _parse_project_row(resolved_root, document)
         if project is not None:
@@ -804,7 +808,7 @@ def _parse_project_row(
     value: JSONValue,
     document: ComoFlightDocument,
 ) -> Project | None:
-    texts = _clean_visible_text(value, document)
+    texts = _clean_component_text(value, document)
     if not texts or texts[0] in {"Projects", "Project link", "GitHub"}:
         return None
     title = texts[0]
@@ -856,7 +860,7 @@ def extract_about_from_flight(document: ComoFlightDocument) -> str | None:
     """Return the paragraphs from the stable About profile-card component."""
 
     for root in _component_roots(document, "About"):
-        texts = _clean_visible_text(root, document)
+        texts = _clean_component_text(root, document)
         paragraphs = [text for text in texts if text.casefold() != "about"]
         if paragraphs:
             return "\n\n".join(paragraphs)
@@ -888,7 +892,7 @@ def extract_certifications_from_flight(
                 if isinstance(value, str)
                 and value.startswith("https://www.linkedin.com/company/")
             }
-            texts = _clean_visible_text(node, document)
+            texts = _clean_component_text(node, document)
             if len(texts) < 2:
                 continue
             issued_entries = [text for text in texts[2:] if text.startswith("Issued ")]
@@ -981,7 +985,7 @@ def extract_languages_from_flight(
             if not _is_react_element(node):
                 continue
             assert isinstance(node, list)
-            texts = _clean_visible_text(node, document)
+            texts = _clean_component_text(node, document)
             if len(texts) != 2 or _has_nested_text_pair(node, document):
                 continue
             name, proficiency = texts
@@ -990,7 +994,7 @@ def extract_languages_from_flight(
             seen_names.add(name)
             languages.append(Language(name=name, proficiency=proficiency))
         if len(languages) == section_language_count:
-            texts = _clean_visible_text(resolved_section, document)
+            texts = _clean_component_text(resolved_section, document)
             if len(texts) == 1 and texts[0] not in seen_names:
                 seen_names.add(texts[0])
                 languages.append(Language(name=texts[0]))
@@ -1018,7 +1022,7 @@ def _language_rows_separated_by_dividers(
             assert isinstance(child, list)
             if child[1] == "hr":
                 continue
-            texts = _clean_visible_text(child, document)
+            texts = _clean_component_text(child, document)
             if len(texts) in {1, 2}:
                 rows.append((texts[0], texts[1] if len(texts) == 2 else None))
         if rows:
@@ -1044,7 +1048,7 @@ def _has_nested_text_pair(
     for nested in _walk(node[3]):
         if nested is node or not _is_react_element(nested):
             continue
-        if len(_clean_visible_text(nested, document)) == 2:
+        if len(_clean_component_text(nested, document)) == 2:
             return True
     return False
 
@@ -1216,13 +1220,16 @@ def _component_roots(
 ) -> list[list[JSONValue]]:
     roots: list[list[JSONValue]] = []
     for root in document.records.values():
-        if not isinstance(root, list) or not _is_react_element(root):
-            continue
-        props = root[3]
-        assert isinstance(props, dict)
-        component_key = props.get("componentKey") or props.get("componentkey")
-        if isinstance(component_key, str) and component_key.endswith(component_suffix):
-            roots.append(root)
+        for candidate in _walk(root):
+            if not isinstance(candidate, list) or not _is_react_element(candidate):
+                continue
+            props = candidate[3]
+            assert isinstance(props, dict)
+            component_key = props.get("componentKey") or props.get("componentkey")
+            if isinstance(component_key, str) and component_key.endswith(
+                component_suffix
+            ):
+                roots.append(candidate)
     return roots
 
 
@@ -1395,6 +1402,14 @@ def _visible_text(
             text_props = props.get("textProps")
             if isinstance(text_props, dict) and "children" in text_props:
                 return _visible_text(text_props["children"], document, visited)
+            if "initialContent" in props:
+                initial_text = _visible_text(
+                    props["initialContent"],
+                    document,
+                    visited,
+                )
+                if initial_text:
+                    return initial_text
             return _visible_text(props.get("children"), document, visited)
         texts: list[str] = []
         for item in value:
