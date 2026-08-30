@@ -183,7 +183,9 @@ card even though the corresponding details page contains data:
   `/details/courses/` links trigger direct GETs, followed by their embedded
   `profile.details.certifications` and `profile.details.courses` pagers.
   Certifications preserve issuer, displayed issue/expiry dates, credential ID,
-  and credential URL. Courses preserve the displayed course name and number.
+  and credential URL. Courses preserve the displayed course name, number, and
+  associated school or organization when LinkedIn shows an `Associated with`
+  label instead of a course number.
   Some pagers omit an explicit next descriptor; after a full page the service
   advances the embedded `start` by its embedded `count`, stopping on a
   short/empty page with the same duplicate-cursor and 20-page bounds.

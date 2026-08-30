@@ -73,6 +73,7 @@ class Certification(BaseModel):
 class Course(BaseModel):
     name: str
     number: str | None = None
+    associated_with: str | None = None
 
 
 class Language(BaseModel):

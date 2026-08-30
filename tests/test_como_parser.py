@@ -944,7 +944,11 @@ def test_extract_courses_and_pager_from_detail_flight_stream() -> None:
     )
 
     assert [item.model_dump() for item in extract_courses_from_flight(document)] == [
-        {"name": "Operating Systems", "number": "CS F372"}
+        {
+            "name": "Operating Systems",
+            "number": "CS F372",
+            "associated_with": None,
+        }
     ]
     assert extract_courses_pagination_request(document) == SduiPaginationRequest(
         pager_id="com.linkedin.sdui.pagers.profile.details.courses",
@@ -967,6 +971,38 @@ def test_extract_courses_ignores_empty_state() -> None:
     )
 
     assert extract_courses_from_flight(document) == []
+
+
+def test_extract_course_association_from_semantic_preview_card() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":'
+                    '[["$","section",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.card.memberCourseTopLevelSection",'
+                    '"initialContent":"$L1"}]]}]'
+                ),
+                '1:["$","div",null,{"initialContent":["$L2","$L3"]}]',
+                (
+                    '2:["$","span",null,{"children":'
+                    '["Executive Program in Business Management"]}]'
+                ),
+                (
+                    '3:["$","span",null,{"children":'
+                    '["Associated with Indian Institute of Management, Calcutta"]}]'
+                ),
+            ]
+        )
+    )
+
+    assert [item.model_dump() for item in extract_courses_from_flight(document)] == [
+        {
+            "name": "Executive Program in Business Management",
+            "number": None,
+            "associated_with": "Indian Institute of Management, Calcutta",
+        }
+    ]
 
 
 def test_extract_languages_from_component_flight_stream() -> None:

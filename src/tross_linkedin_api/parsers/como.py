@@ -927,35 +927,42 @@ def extract_certifications_from_flight(
 
 
 def extract_courses_from_flight(document: ComoFlightDocument) -> list[Course]:
-    """Normalize Course name/number rows from preview or paginated SDUI content."""
+    """Normalize course rows from preview or paginated SDUI content."""
 
     courses: list[Course] = []
-    seen: set[tuple[str, str]] = set()
-    has_top_level_section = any(
-        isinstance(value, str) and "CourseTopLevelSection" in value
-        for root in document.records.values()
-        for value in _walk(root)
+    seen: set[tuple[str, str, str]] = set()
+    course_sections = _component_roots(document, "CourseTopLevelSection")
+    roots: Iterable[JSONValue] = (
+        course_sections if course_sections else document.records.values()
     )
-    for root in document.records.values():
+    for root in roots:
         for candidate in _walk(root):
             if not _is_react_element(candidate):
-                continue
-            if has_top_level_section and not any(
-                isinstance(value, str) and "CourseDetails" in value
-                for value in _walk(candidate)
-            ):
                 continue
             texts = _clean_visible_text(candidate, document)
             if len(texts) != 2:
                 continue
-            name, number = texts
-            if name == "Nothing to see for now":
+            name, detail = texts
+            if name in {"Courses", "Nothing to see for now"}:
                 continue
-            identity = (name, number)
+            association_prefix = "Associated with "
+            associated_with = (
+                detail.removeprefix(association_prefix).strip()
+                if detail.startswith(association_prefix)
+                else None
+            )
+            number = None if associated_with else detail or None
+            identity = (name, number or "", associated_with or "")
             if identity in seen:
                 continue
             seen.add(identity)
-            courses.append(Course(name=name, number=number or None))
+            courses.append(
+                Course(
+                    name=name,
+                    number=number,
+                    associated_with=associated_with,
+                )
+            )
     return courses
 
 
