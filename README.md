@@ -40,7 +40,7 @@ GET /in/<vanity>/                         (SSR HTML)
              |
              +--> POST /flagship-web/rsc-action/actions/component
                   for About, experience, education/certifications/projects,
-                  recommendations, publications/test scores, languages,
+                  recommendations, courses/publications/test scores, languages,
                   and skills
                          |
                          +--> when Experience exposes "Show all experiences"
@@ -55,6 +55,10 @@ GET /in/<vanity>/                         (SSR HTML)
                          |    GET /in/<vanity>/details/projects/
                          |    POST /flagship-web/rsc-action/actions/pagination
                          |    until the embedded pager has no next request
+                         |
+                         +--> when Certifications or Courses exposes "Show all"
+                         |    GET /in/<vanity>/details/<section>/
+                         |    and exhaust its embedded SDUI pager
                          |
                          +--> GET recommendation/publication/test-score details
                          |    and POST their embedded Received/Given or list pagers
@@ -148,7 +152,7 @@ Supported component suffixes are:
 | `profileCardsExperienceOnly` | `experiences` plus complete Experience detail discovery |
 | `profileCardsBelowActivityPart1WithoutExp` | `education`, `certifications`, `projects` |
 | `profileCardsBelowActivityPart2` | `recommendations` (`received` and `given`) |
-| `profileCardsBelowActivityPart3` | `publications`, `test_scores` |
+| `profileCardsBelowActivityPart3` | `courses`, `publications`, `test_scores` |
 | `profileCardsBelowActivityPart4` | `languages` |
 | `profileCardsBelowActivityPart7` | `skills` |
 
@@ -174,6 +178,14 @@ card even though the corresponding details page contains data:
   pagination action. Project rows are separated by LinkedIn's divider elements
   and normalized into title, description, external URL, summarized skills, and
   optional dates.
+- Certifications and Courses: validated `/details/certifications/` and
+  `/details/courses/` links trigger direct GETs, followed by their embedded
+  `profile.details.certifications` and `profile.details.courses` pagers.
+  Certifications preserve issuer, displayed issue/expiry dates, credential ID,
+  and credential URL. Courses preserve the displayed course name and number.
+  Some of these pagers omit an explicit next descriptor; after a full page the
+  service advances the embedded `start` by its embedded `count`, stopping on a
+  short/empty page with the same duplicate-cursor and 20-page bounds.
 - Recommendations: Part 2 triggers a direct GET of
   `/in/<vanity>/details/recommendations/`. The service separately forwards the
   embedded `Received` and `Given` pagers and returns each entry with its type,
@@ -196,8 +208,10 @@ card even though the corresponding details page contains data:
 
 Every pagination response is parsed with the same React Flight parser.
 Embedded next-page requests are followed with duplicate-cursor detection and a
-bounded page limit. Results are deduplicated while preserving LinkedIn's order.
-Member IDs, page offsets, and pagination tokens are never guessed or hardcoded.
+bounded page limit. For the two list pagers documented above, a missing next
+descriptor after a full page is advanced from LinkedIn's own `start` and `count`
+values. Results are deduplicated while preserving LinkedIn's order. Member IDs
+and pagination tokens are never guessed or hardcoded.
 
 ### 6. Normalize irregular profile data
 
@@ -300,6 +314,7 @@ The response contains a `profile` object with this stable shape:
     "publications": [],
     "recommendations": [],
     "certifications": [],
+    "courses": [],
     "languages": [],
     "has_profile_photo_frame": false,
     "profile_images": []
@@ -510,7 +525,10 @@ tests/                        # unit, contract, and transport tests
   and session; an empty list can mean the section is not visible.
 - Signed image URLs can expire.
 - A framed-photo URL confirms that a frame exists, but the current SSR/SDUI
-  payload does not reliably distinguish Open to Work from Hiring.
+  payload does not reliably distinguish Open to Work from Hiring. A color-based
+  image classifier could provide a heuristic, but green/purple backgrounds and
+  compression make it unsuitable as an authoritative boolean without a
+  confidence score and a validated framed-photo sample set.
 - A valid `li_at` does not guarantee indefinite access; checkpoint and rate-limit
   responses require manual operational handling.
 - Caller-supplied cookies are intentionally not persisted or refreshed. The

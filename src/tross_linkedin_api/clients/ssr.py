@@ -12,7 +12,10 @@ from tross_linkedin_api.parsers.como import (
     SduiPaginationRequest,
     extract_about_from_flight,
     extract_certifications_from_flight,
+    extract_certifications_pagination_request,
     extract_component_requests,
+    extract_courses_from_flight,
+    extract_courses_pagination_request,
     extract_education_from_flight,
     extract_education_pagination_request,
     extract_experiences_from_flight,
@@ -34,6 +37,8 @@ from tross_linkedin_api.parsers.como import (
     parse_como_flight,
 )
 from tross_linkedin_api.schemas.profile import (
+    Certification,
+    Course,
     Education,
     LinkedInProfile,
     Position,
@@ -82,6 +87,10 @@ class PaginationFetcher(Protocol):
 
 SKILLS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileSkillDetails"
 EDUCATION_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileEducationDetails"
+CERTIFICATIONS_SCREEN_ID = (
+    "com.linkedin.sdui.flagshipnav.profile.ProfileCertificationDetails"
+)
+COURSES_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileCourseDetails"
 PROJECTS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileProjectDetails"
 PUBLICATIONS_SCREEN_ID = (
     "com.linkedin.sdui.flagshipnav.profile.ProfilePublicationDetails"
@@ -94,6 +103,8 @@ TEST_SCORES_SCREEN_ID = (
 )
 MAX_SKILLS_PAGES = 20
 MAX_EDUCATION_PAGES = 20
+MAX_CERTIFICATION_PAGES = 20
+MAX_COURSE_PAGES = 20
 MAX_PROJECTS_PAGES = 20
 MAX_PUBLICATION_PAGES = 20
 MAX_RECOMMENDATION_PAGES = 20
@@ -161,9 +172,23 @@ class SsrLinkedInProfileClient:
                     updates["experiences"] = preview_experiences
             elif component_id.endswith("profileCardsBelowActivityPart1WithoutExp"):
                 updates["education"] = extract_education_from_flight(component)
-                updates["certifications"] = extract_certifications_from_flight(
-                    component
+                preview_certifications = extract_certifications_from_flight(component)
+                certifications_path = extract_profile_details_path(
+                    component,
+                    "certifications",
                 )
+                if (
+                    certifications_path
+                    == f"/in/{request.public_identifier}/details/certifications/"
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["certifications"] = await self._fetch_all_certifications(
+                        request.public_identifier,
+                        preview_certifications,
+                    )
+                else:
+                    updates["certifications"] = preview_certifications
                 projects_path = extract_profile_details_path(component, "projects")
                 if (
                     projects_path
@@ -186,6 +211,21 @@ class SsrLinkedInProfileClient:
                         )
                     )
             elif component_id.endswith("profileCardsBelowActivityPart3"):
+                preview_courses = extract_courses_from_flight(component)
+                courses_path = extract_profile_details_path(component, "courses")
+                if (
+                    courses_path
+                    == f"/in/{request.public_identifier}/details/courses/"
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["courses"] = await self._fetch_all_courses(
+                        request.public_identifier,
+                        preview_courses,
+                    )
+                else:
+                    updates["courses"] = preview_courses
+
                 preview_publications = extract_publications_from_flight(component)
                 publications_path = extract_profile_details_path(
                     component,
@@ -344,6 +384,90 @@ class SsrLinkedInProfileClient:
             next_request = extract_projects_pagination_request(page)
             if next_request is None:
                 return projects
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
+
+    async def _fetch_all_certifications(
+        self,
+        public_identifier: str,
+        preview_certifications: list[Certification],
+    ) -> list[Certification]:
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "certifications",
+        )
+        inline_items = extract_certifications_from_flight(details_document)
+        pagination_request = extract_certifications_pagination_request(
+            details_document
+        )
+        if pagination_request is None:
+            return inline_items or preview_certifications
+
+        certifications: list[Certification] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_CERTIFICATION_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                CERTIFICATIONS_SCREEN_ID,
+            )
+            page_items = extract_certifications_from_flight(page)
+            for certification in page_items:
+                if certification not in certifications:
+                    certifications.append(certification)
+            next_request = extract_certifications_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
+            if next_request is None:
+                return certifications or inline_items or preview_certifications
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
+
+    async def _fetch_all_courses(
+        self,
+        public_identifier: str,
+        preview_courses: list[Course],
+    ) -> list[Course]:
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "courses",
+        )
+        inline_courses = extract_courses_from_flight(details_document)
+        pagination_request = extract_courses_pagination_request(details_document)
+        if pagination_request is None:
+            return inline_courses or preview_courses
+
+        courses: list[Course] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_COURSE_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                COURSES_SCREEN_ID,
+            )
+            page_items = extract_courses_from_flight(page)
+            for course in page_items:
+                if course not in courses:
+                    courses.append(course)
+            next_request = extract_courses_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
+            if next_request is None:
+                return courses or inline_courses or preview_courses
             pagination_request = next_request
         raise LinkedInInvalidResponseError
 
@@ -544,3 +668,32 @@ def _pagination_request_type(request: SduiPaginationRequest) -> str | None:
     payload = request.payload()
     value = payload.get("type") if payload is not None else None
     return value if isinstance(value, str) else None
+
+
+def _advance_full_page_request(
+    request: SduiPaginationRequest,
+    returned_items: int,
+) -> SduiPaginationRequest | None:
+    """Advance pagers that omit a next request when the current page is full."""
+
+    payload = request.payload()
+    if payload is None:
+        return None
+    start = payload.get("start")
+    count = payload.get("count")
+    if type(start) is not int or type(count) is not int or count <= 0:
+        return None
+    if returned_items < count:
+        return None
+    next_arguments = {
+        **request.requested_arguments,
+        "payload": {**payload, "start": start + count},
+    }
+    return SduiPaginationRequest(
+        pager_id=request.pager_id,
+        requested_arguments=next_arguments,
+        raw_request={
+            **request.raw_request,
+            "requestedArguments": next_arguments,
+        },
+    )

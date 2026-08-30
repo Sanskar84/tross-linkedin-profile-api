@@ -70,6 +70,11 @@ class Certification(BaseModel):
     end_date: DateParts | None = None
 
 
+class Course(BaseModel):
+    name: str
+    number: str | None = None
+
+
 class Language(BaseModel):
     name: str
     proficiency: str | None = None
@@ -132,6 +137,7 @@ class LinkedInProfile(BaseModel):
     publications: list[Publication] = Field(default_factory=list)
     recommendations: list[Recommendation] = Field(default_factory=list)
     certifications: list[Certification] = Field(default_factory=list)
+    courses: list[Course] = Field(default_factory=list)
     languages: list[Language] = Field(default_factory=list)
     has_profile_photo_frame: bool = False
     profile_images: list[ProfileImage] = Field(default_factory=list)

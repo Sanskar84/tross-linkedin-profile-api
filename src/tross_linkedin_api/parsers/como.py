@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from tross_linkedin_api.schemas.profile import (
     Certification,
+    Course,
     DateParts,
     Education,
     Language,
@@ -33,6 +34,8 @@ ASYNC_COMPONENT_REQUEST_TYPE = "proto.sdui.actions.core.AsyncComponentRequest"
 PAGINATION_REQUEST_TYPE = "proto.sdui.actions.requests.PaginationRequest"
 SKILLS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.skills"
 EDUCATION_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.education"
+CERTIFICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.certifications"
+COURSES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.courses"
 PUBLICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.publications"
 RECOMMENDATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.recommendations"
 TEST_SCORES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.testscores"
@@ -44,6 +47,8 @@ PROJECTS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.projects"
 SKILLS_ALL_FILTER = "ProfileSkillCategory_ALL"
 PROFILE_DETAILS_SECTIONS = frozenset(
     {
+        "certifications",
+        "courses",
         "education",
         "experience",
         "projects",
@@ -327,6 +332,22 @@ def extract_education_pagination_request(
     """Return the Education pager embedded in a details or page response."""
 
     return _extract_pagination_request(document, EDUCATION_PAGER_ID)
+
+
+def extract_certifications_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Certifications pager embedded in its details response."""
+
+    return _extract_pagination_request(document, CERTIFICATIONS_PAGER_ID)
+
+
+def extract_courses_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Courses pager embedded in its details response."""
+
+    return _extract_pagination_request(document, COURSES_PAGER_ID)
 
 
 def extract_publications_pagination_request(
@@ -849,7 +870,14 @@ def extract_certifications_from_flight(
 
     certifications: list[Certification] = []
     seen: set[tuple[str, str]] = set()
-    for section in _component_roots(document, "CertificationTopLevel"):
+    sections = [
+        *_component_roots(document, "CertificationTopLevel"),
+        *_component_roots(document, "CertificationDetails"),
+    ]
+    section_candidates: Iterable[JSONValue] = (
+        sections if sections else document.records.values()
+    )
+    for section in section_candidates:
         resolved_section = _resolve_references(section, document)
         for node in _walk(resolved_section):
             if not _is_react_element(node):
@@ -860,20 +888,18 @@ def extract_certifications_from_flight(
                 if isinstance(value, str)
                 and value.startswith("https://www.linkedin.com/company/")
             }
-            if len(company_urls) != 1:
-                continue
             texts = _clean_visible_text(node, document)
             if len(texts) < 2:
+                continue
+            issued_entries = [text for text in texts[2:] if text.startswith("Issued ")]
+            if len(company_urls) != 1 and len(issued_entries) != 1:
                 continue
             name, authority = texts[0], texts[1]
             identity = (name, authority)
             if identity in seen:
                 continue
             seen.add(identity)
-            issued = next(
-                (text for text in texts[2:] if text.startswith("Issued ")),
-                None,
-            )
+            issued = issued_entries[0] if issued_entries else None
             start_date, end_date = _parse_certification_dates(issued)
             credential = next(
                 (
@@ -894,6 +920,39 @@ def extract_certifications_from_flight(
                 )
             )
     return certifications
+
+
+def extract_courses_from_flight(document: ComoFlightDocument) -> list[Course]:
+    """Normalize Course name/number rows from preview or paginated SDUI content."""
+
+    courses: list[Course] = []
+    seen: set[tuple[str, str]] = set()
+    has_top_level_section = any(
+        isinstance(value, str) and "CourseTopLevelSection" in value
+        for root in document.records.values()
+        for value in _walk(root)
+    )
+    for root in document.records.values():
+        for candidate in _walk(root):
+            if not _is_react_element(candidate):
+                continue
+            if has_top_level_section and not any(
+                isinstance(value, str) and "CourseDetails" in value
+                for value in _walk(candidate)
+            ):
+                continue
+            texts = _clean_visible_text(candidate, document)
+            if len(texts) != 2:
+                continue
+            name, number = texts
+            if name == "Nothing to see for now":
+                continue
+            identity = (name, number)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            courses.append(Course(name=name, number=number or None))
+    return courses
 
 
 def extract_languages_from_flight(

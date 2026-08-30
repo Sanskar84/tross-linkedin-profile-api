@@ -94,6 +94,8 @@ PROFILE_PAGE_ACCEPT = (
 )
 PROFILE_DETAILS_SECTIONS = frozenset(
     {
+        "certifications",
+        "courses",
         "education",
         "experience",
         "projects",

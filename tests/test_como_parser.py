@@ -12,6 +12,8 @@ from tross_linkedin_api.parsers.como import (
     extract_about_from_flight,
     extract_certifications_from_flight,
     extract_component_requests,
+    extract_courses_from_flight,
+    extract_courses_pagination_request,
     extract_education_from_flight,
     extract_experiences_from_flight,
     extract_languages_from_flight,
@@ -890,6 +892,60 @@ def test_extract_certifications_from_component_flight_stream() -> None:
     ]
 
 
+def test_extract_courses_and_pager_from_detail_flight_stream() -> None:
+    next_request = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": "com.linkedin.sdui.pagers.profile.details.courses",
+        "requestedArguments": {
+            "payload": {
+                "vanityName": "ada-lovelace",
+                "profileId": "member-id",
+                "start": 10,
+                "count": 10,
+            }
+        },
+    }
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.CourseDetails",'
+                    '"children":["$L1","$L2"]}]'
+                ),
+                '1:["$","span",null,{"children":["Operating Systems"]}]',
+                '2:["$","span",null,{"children":["CS F372"]}]',
+                f"3:{json.dumps(next_request)}",
+            ]
+        )
+    )
+
+    assert [item.model_dump() for item in extract_courses_from_flight(document)] == [
+        {"name": "Operating Systems", "number": "CS F372"}
+    ]
+    assert extract_courses_pagination_request(document) == SduiPaginationRequest(
+        pager_id="com.linkedin.sdui.pagers.profile.details.courses",
+        requested_arguments=next_request["requestedArguments"],
+        raw_request=next_request,
+    )
+
+
+def test_extract_courses_ignores_empty_state() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":'
+                    '["Nothing to see for now",'
+                    '"Courses that Ada adds will appear here."]}]'
+                )
+            ]
+        )
+    )
+
+    assert extract_courses_from_flight(document) == []
+
+
 def test_extract_languages_from_component_flight_stream() -> None:
     document = parse_flight_stream(
         flight_stream(
@@ -1016,9 +1072,10 @@ def test_extract_profile_from_top_card_component() -> None:
         "projects": [],
         "test_scores": [],
         "publications": [],
-        "recommendations": [],
-        "certifications": [],
-        "languages": [],
+            "recommendations": [],
+            "certifications": [],
+            "courses": [],
+            "languages": [],
         "has_profile_photo_frame": False,
         "profile_images": [
             {
@@ -1441,6 +1498,154 @@ async def test_ssr_client_fetches_full_publications_scores_and_recommendations()
         ("ada-lovelace", "publications"),
         ("ada-lovelace", "test-scores"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ssr_client_replaces_certification_and_course_previews_with_all_pages() -> None:
+    profile_html = hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Ada","familyName":"Lovelace"}},'
+                '"requests":[{"$type":"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart1WithoutExp",'
+                '"requestedArguments":{}},{"$type":'
+                '"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart3",'
+                '"requestedArguments":{}}]}]'
+            ),
+        ]
+    )
+
+    def pager(section: str, start: int) -> dict[str, object]:
+        return {
+            "$type": "proto.sdui.actions.requests.PaginationRequest",
+            "pagerId": f"com.linkedin.sdui.pagers.profile.details.{section}",
+            "requestedArguments": {
+                "payload": {
+                    "vanityName": "ada-lovelace",
+                    "profileId": "member-id",
+                    "start": start,
+                    "count": 1,
+                }
+            },
+        }
+
+    detail_html = {
+        section: hydration_html([f"0:{json.dumps(pager(section, 0))}"])
+        for section in ("certifications", "courses")
+    }
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.details_calls: list[tuple[str, str]] = []
+
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(profile_html, "text/html", len(profile_html))
+
+        async def fetch_profile_details_page(
+            self,
+            public_identifier: str,
+            section: str,
+        ) -> ProfilePageDocument:
+            self.details_calls.append((public_identifier, section))
+            html = detail_html.get(
+                section,
+                hydration_html(['0:["$","div",null,{"children":[]}]']),
+            )
+            return ProfilePageDocument(html, "text/html", len(html))
+
+    class FakeComponentTransport:
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            section = (
+                "certifications"
+                if request.component_id.endswith("Part1WithoutExp")
+                else "courses"
+            )
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        (
+                            '0:["$","a",null,{"url":'
+                            f'"/in/ada-lovelace/details/{section}/",'
+                            f'"children":["Show all {section}"]}}]'
+                        )
+                    ]
+                )
+            )
+
+    class FakePaginationTransport:
+        async def fetch_page(
+            self,
+            request: SduiPaginationRequest,
+            screen_id: str,
+        ) -> ComoFlightDocument:
+            payload = request.payload()
+            assert payload is not None
+            start = payload["start"]
+            assert isinstance(start, int)
+            section = request.pager_id.rsplit(".", maxsplit=1)[-1]
+            if start >= 2:
+                return parse_flight_stream(
+                    flight_stream(['0:["$","div",null,{"children":[]}]'])
+                )
+            records: list[str]
+            if section == "certifications":
+                assert screen_id.endswith(".ProfileCertificationDetails")
+                records = [
+                    (
+                        '0:["$","div",null,{"componentKey":'
+                        '"com.linkedin.sdui.profile.CertificationDetails",'
+                        '"children":["$L1","$L2","$L3"]}]'
+                    ),
+                    (
+                        '1:["$","img",null,{"url":'
+                        f'"https://www.linkedin.com/company/{start + 1}/"}}]'
+                    ),
+                    f'2:["$","span",null,{{"children":["Certificate {start + 1}"]}}]',
+                    '3:["$","span",null,{"children":["Authority"]}]',
+                ]
+            else:
+                assert screen_id.endswith(".ProfileCourseDetails")
+                records = [
+                    (
+                        '0:["$","div",null,{"componentKey":'
+                        '"com.linkedin.sdui.profile.CourseDetails",'
+                        '"children":["$L1","$L2"]}]'
+                    ),
+                    f'1:["$","span",null,{{"children":["Course {start + 1}"]}}]',
+                    f'2:["$","span",null,{{"children":["CODE {start + 1}"]}}]',
+                ]
+            return parse_flight_stream(flight_stream(records))
+
+    transport = FakeTransport()
+    client = SsrLinkedInProfileClient(
+        transport,
+        FakeComponentTransport(),
+        transport,
+        FakePaginationTransport(),
+    )
+
+    profile = await client.fetch_profile(
+        ProfileRequest(profile_url="https://www.linkedin.com/in/ada-lovelace/")
+    )
+
+    assert [item.name for item in profile.certifications] == [
+        "Certificate 1",
+        "Certificate 2",
+    ]
+    assert [item.name for item in profile.courses] == ["Course 1", "Course 2"]
+    assert ("ada-lovelace", "certifications") in transport.details_calls
+    assert ("ada-lovelace", "courses") in transport.details_calls
 
 
 @pytest.mark.asyncio
