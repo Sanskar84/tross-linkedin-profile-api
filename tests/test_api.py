@@ -30,6 +30,18 @@ def test_health_endpoint_does_not_require_linkedin_credentials() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_homepage_exposes_accessible_profile_demo() -> None:
+    with TestClient(create_app()) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert '<label for="profile-url">LinkedIn profile URL</label>' in response.text
+    assert 'action="/v1/linkedin/profile"' in response.text
+    assert 'aria-live="polite"' in response.text
+    assert 'href="/docs"' in response.text
+
+
 def test_profile_endpoint_exposes_stable_upstream_error() -> None:
     with TestClient(create_failing_test_app()) as client:
         response = client.post(

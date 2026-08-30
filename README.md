@@ -16,6 +16,7 @@ The hosted API already has a server-side LinkedIn session configured. An
 evaluator does **not** need to obtain or submit a LinkedIn cookie for the normal
 assignment flow.
 
+- Interactive demo: <https://tross-linkedin-profile-api-production-35c4.up.railway.app/>
 - API documentation: <https://tross-linkedin-profile-api-production-35c4.up.railway.app/docs>
 - Health check: <https://tross-linkedin-profile-api-production-35c4.up.railway.app/health>
 - Profile endpoint: `POST /v1/linkedin/profile`
@@ -318,6 +319,11 @@ Values are loaded through `pydantic-settings`. Secrets remain wrapped as
 
 Live base URL:
 `https://tross-linkedin-profile-api-production-35c4.up.railway.app`
+
+Opening the base URL displays a lightweight demo form that submits a LinkedIn
+profile URL to the same public JSON endpoint and renders the response. It uses
+no frontend framework, browser automation, or additional backend route for data
+retrieval.
 
 Interactive OpenAPI documentation:
 `https://tross-linkedin-profile-api-production-35c4.up.railway.app/docs`

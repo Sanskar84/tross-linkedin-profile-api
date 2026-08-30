@@ -1,12 +1,19 @@
 """Public HTTP routes."""
 
 from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
 
+from tross_linkedin_api.api.homepage import HOMEPAGE_HTML
 from tross_linkedin_api.dependencies import ProfileServiceDependency
 from tross_linkedin_api.schemas.common import ErrorResponse, HealthResponse
 from tross_linkedin_api.schemas.profile import ProfileRequest, ProfileResponse
 
 router = APIRouter()
+
+
+@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def homepage() -> HTMLResponse:
+    return HTMLResponse(HOMEPAGE_HTML)
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
