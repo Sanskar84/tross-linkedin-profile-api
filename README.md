@@ -621,6 +621,8 @@ following current coverage:
 | Volunteer experience, patents, organizations | Detected as stable semantic component families, but no populated row was available in the audited sample; not yet normalized |
 | Interests | Detected in Part 5, but its tabbed entity feed is not currently part of the public response |
 | Causes | Detected in Part 6 on populated profiles, but not currently part of the public response |
+| Featured content and Activity/posts | Not returned; these are feed-like, potentially large, and outside the assignment's requested profile fields |
+| Follower, connection, and mutual-connection metadata | Not normalized because visibility and wording vary by viewer and relationship |
 | Email and phone | Intentionally omitted; not exposed consistently by the tested profile payloads and no third-party enrichment is used |
 | Open to Work / Hiring | Only `has_profile_photo_frame` is authoritative; frame type is not guessed |
 
@@ -629,6 +631,40 @@ covered. It does not mean every possible LinkedIn module is normalized: private
 profile UI contracts vary by account, locale, relationship, and LinkedIn
 release. Newly observed section families should be added only after a populated
 payload provides a testable row contract.
+
+### Not currently returned and possible extensions
+
+The following are deliberate gaps in the public response rather than fields the
+service claims to support:
+
+- **Volunteer experience, patents, and organizations:** good candidates for a
+  future release once populated SSR/SDUI fixtures are available. These are the
+  most useful remaining structured résumé sections.
+- **Causes:** straightforward but low priority; it is normally a short list of
+  member-selected topics.
+- **Interests:** LinkedIn renders a tabbed feed containing people, companies,
+  schools, groups, and newsletters. Returning it well requires a typed entity
+  model and duplicate suppression across tabs.
+- **Featured content and Activity/posts:** intentionally excluded from the
+  profile endpoint because they are feed-like, can paginate heavily, and would
+  make response time and size much less predictable. They belong in separate
+  endpoints if implemented.
+- **Follower count, connection degree/count, mutual connections, and related
+  URLs:** viewer-dependent and not consistently present in the same profile
+  payload. They should remain optional if added.
+- **Contact information:** email, phone number, websites, and similar fields may
+  depend on relationship and member privacy settings. This implementation does
+  not call enrichment providers or infer missing personal data.
+- **Media attachments:** the normalized résumé sections preserve useful text
+  and external links, but do not attempt to download every image, document, or
+  video attachment.
+- **Open to Work versus Hiring classification:** a profile-photo frame is
+  reported, but its meaning is not guessed from image colors.
+
+If the scope is expanded, the recommended implementation order is volunteer
+experience, patents, organizations, and causes. Interests and activity should
+remain separate from the core profile response so they cannot make ordinary
+profile requests unbounded.
 
 - LinkedIn can rename component identifiers, change payloads, or remove fields
   without notice because these are private contracts.
