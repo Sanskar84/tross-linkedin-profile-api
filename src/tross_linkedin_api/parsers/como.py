@@ -442,16 +442,14 @@ def extract_education_from_flight(
             if not texts:
                 continue
             school_name = texts[0]
-            dated_entry = next(
-                (
-                    (index, parsed)
-                    for index, text in enumerate(texts[1:], start=1)
-                    if (parsed := _parse_education_dates(text)) is not None
-                ),
-                None,
-            )
-            if is_detail_row and dated_entry is None:
+            dated_entries = [
+                (index, parsed)
+                for index, text in enumerate(texts[1:], start=1)
+                if (parsed := _parse_education_dates(text)) is not None
+            ]
+            if is_detail_row and len(dated_entries) != 1:
                 continue
+            dated_entry = dated_entries[0] if dated_entries else None
             date_index, dates = (
                 dated_entry if dated_entry is not None else (len(texts), None)
             )

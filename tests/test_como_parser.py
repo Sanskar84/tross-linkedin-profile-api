@@ -379,6 +379,38 @@ def test_extract_education_preserves_partial_and_qualified_degree_cards() -> Non
     ]
 
 
+def test_extract_education_ignores_nested_section_wrapper() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","section",null,{"componentKey":'
+                    '"11111111-1111-1111-1111-111111111111",'
+                    '"initialContent":["Education","First University",'
+                    '"First Degree","2019 – 2023","Second University",'
+                    '"Second Degree","2024 – 2025"]}]'
+                ),
+                (
+                    '1:["$","div",null,{"componentKey":'
+                    '"22222222-2222-2222-2222-222222222222",'
+                    '"initialContent":["First University","First Degree",'
+                    '"2019 – 2023"]}]'
+                ),
+                (
+                    '2:["$","div",null,{"componentKey":'
+                    '"33333333-3333-3333-3333-333333333333",'
+                    '"initialContent":["Second University","Second Degree",'
+                    '"2024 – 2025"]}]'
+                ),
+            ]
+        )
+    )
+
+    assert [
+        item.school_name for item in extract_education_from_flight(document)
+    ] == ["First University", "Second University"]
+
+
 def test_extract_skills_from_component_flight_stream() -> None:
     document = parse_flight_stream(
         flight_stream(
