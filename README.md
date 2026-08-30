@@ -157,7 +157,10 @@ card even though the corresponding details page contains data:
   without guessing an additional request.
 - Education: when the lower-profile preview component is absent or returns no
   education rows, the service directly GETs
-  `/in/<vanity>/details/education/` and parses the embedded education cards.
+  `/in/<vanity>/details/education/`, extracts LinkedIn's embedded Education
+  pager, and forwards that request to the pagination action. Current Education
+  rows may be URL-less UUID components whose content is deferred through
+  `initialContent`; the parser resolves those references before normalization.
 - Projects: a validated `/in/<vanity>/details/projects/` link triggers a direct
   GET. The service forwards the embedded
   `com.linkedin.sdui.pagers.profile.details.projects` request to LinkedIn's SDUI
@@ -169,7 +172,9 @@ card even though the corresponding details page contains data:
   `com.linkedin.sdui.pagers.profile.details.skills` request whose filter is
   `ProfileSkillCategory_ALL`, then forwards it to the same pagination action.
   The same details-page flow is used as a fallback when the main profile omits
-  the Skills preview card entirely.
+  the Skills preview card entirely. Per-skill rows can likewise place their
+  visible label in deferred `initialContent`, which is resolved without running
+  a browser.
 
 Every pagination response is parsed with the same React Flight parser.
 Embedded next-page requests are followed with duplicate-cursor detection and a

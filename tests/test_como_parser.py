@@ -1228,9 +1228,10 @@ async def test_ssr_client_falls_back_to_detail_pages_when_preview_cards_are_miss
                         [
                             (
                                 '0:["$","div",null,{"children":'
-                                '[["$","button",null,{"url":'
-                                '"https://www.linkedin.com/school/123/",'
-                                '"children":["$L1","$L2","$L3"]}]]}]'
+                                '[["$","div",null,{"componentKey":'
+                                '"c6dc0838-8cb3-4281-9772-f200aedcacd4",'
+                                '"initialContent":["$","div",null,{"children":'
+                                '["$L1","$L2","$L3"]}]}]]}]'
                             ),
                             (
                                 '1:["$","span",null,{"children":'
@@ -1258,7 +1259,7 @@ async def test_ssr_client_falls_back_to_detail_pages_when_preview_cards_are_miss
                             '0:["$","div",null,{"children":'
                             '[["$","div",null,{"componentKey":'
                             '"com.linkedin.sdui.profile.skill(member, 1)",'
-                            '"children":["$L1"]}]]}]'
+                            '"initialContent":"$L1"}]]}]'
                         ),
                         '1:["$","span",null,{"children":["Data Science"]}]',
                     ]

@@ -29,6 +29,10 @@ ASYNC_COMPONENT_REQUEST_TYPE = "proto.sdui.actions.core.AsyncComponentRequest"
 PAGINATION_REQUEST_TYPE = "proto.sdui.actions.requests.PaginationRequest"
 SKILLS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.skills"
 EDUCATION_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.education"
+UUID_COMPONENT_KEY_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 PROJECTS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.projects"
 SKILLS_ALL_FILTER = "ProfileSkillCategory_ALL"
 PROFILE_DETAILS_SECTIONS = frozenset(
@@ -418,11 +422,21 @@ def extract_education_from_flight(
                 if isinstance(value, str)
                 and value.startswith("https://www.linkedin.com/school/")
             }
-            if len(school_urls) != 1:
+            candidate_props = _react_props(candidate)
+            component_key = (
+                candidate_props.get("componentKey")
+                if candidate_props is not None
+                else None
+            )
+            is_detail_row = (
+                isinstance(component_key, str)
+                and UUID_COMPONENT_KEY_PATTERN.fullmatch(component_key) is not None
+            )
+            if len(school_urls) != 1 and not is_detail_row:
                 continue
             texts = [
                 text.strip()
-                for text in _visible_text(candidate, document)
+                for text in _component_content_text(candidate, document)
                 if text.strip()
             ]
             if not texts:
@@ -436,6 +450,8 @@ def extract_education_from_flight(
                 ),
                 None,
             )
+            if is_detail_row and dated_entry is None:
+                continue
             date_index, dates = (
                 dated_entry if dated_entry is not None else (len(texts), None)
             )
@@ -476,11 +492,12 @@ def extract_skills_from_flight(document: ComoFlightDocument) -> list[str]:
                 and str(candidate[3]["componentKey"]).startswith(
                     "com.linkedin.sdui.profile.skill("
                 )
+                and not str(candidate[3]["componentKey"]).endswith("-divider")
             ):
                 continue
             texts = [
                 text.strip()
-                for text in _visible_text(candidate, document)
+                for text in _component_content_text(candidate, document)
                 if text.strip()
             ]
             if texts and texts[0] not in skills:
@@ -883,6 +900,13 @@ def _is_react_element(value: JSONValue) -> bool:
     )
 
 
+def _react_props(value: JSONValue) -> dict[str, JSONValue] | None:
+    if not isinstance(value, list) or len(value) < 4 or value[0] != "$":
+        return None
+    props = value[3]
+    return props if isinstance(props, dict) else None
+
+
 def _component_roots(
     document: ComoFlightDocument,
     component_suffix: str,
@@ -936,6 +960,23 @@ def _clean_visible_text(
         for text in _visible_text(value, document)
         if (cleaned := " ".join(text.split()))
     ]
+
+
+def _component_content_text(
+    value: JSONValue,
+    document: ComoFlightDocument,
+) -> list[str]:
+    """Read a component's deferred content before its ordinary children."""
+
+    props = _react_props(value)
+    if props is not None:
+        for key in ("initialContent", "children"):
+            if key not in props:
+                continue
+            texts = _visible_text(props[key], document)
+            if texts:
+                return texts
+    return _visible_text(value, document)
 
 
 def _find_credential_url(value: JSONValue) -> str | None:
