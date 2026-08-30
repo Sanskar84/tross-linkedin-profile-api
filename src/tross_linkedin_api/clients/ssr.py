@@ -14,6 +14,7 @@ from tross_linkedin_api.parsers.como import (
     extract_certifications_from_flight,
     extract_component_requests,
     extract_education_from_flight,
+    extract_education_pagination_request,
     extract_experiences_from_flight,
     extract_languages_from_flight,
     extract_profile_details_path,
@@ -70,8 +71,10 @@ class PaginationFetcher(Protocol):
 
 
 SKILLS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileSkillDetails"
+EDUCATION_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileEducationDetails"
 PROJECTS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileProjectDetails"
 MAX_SKILLS_PAGES = 20
+MAX_EDUCATION_PAGES = 20
 MAX_PROJECTS_PAGES = 20
 
 
@@ -194,7 +197,30 @@ class SsrLinkedInProfileClient:
             details_document = parse_como_flight(details_page.html)
         except ComoFlightParseError as error:
             raise LinkedInInvalidResponseError from error
-        return extract_education_from_flight(details_document)
+        inline_education = extract_education_from_flight(details_document)
+        pagination_request = extract_education_pagination_request(details_document)
+        if pagination_request is None or self._pagination_transport is None:
+            return inline_education
+
+        education: list[Education] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_EDUCATION_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                EDUCATION_SCREEN_ID,
+            )
+            for item in extract_education_from_flight(page):
+                if item not in education:
+                    education.append(item)
+            next_request = extract_education_pagination_request(page)
+            if next_request is None:
+                return education or inline_education
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
 
     async def _fetch_all_experiences(
         self,

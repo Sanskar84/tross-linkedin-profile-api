@@ -28,6 +28,7 @@ CONTACT_INFO_PATH_SUFFIX = "/overlay/contact-info/"
 ASYNC_COMPONENT_REQUEST_TYPE = "proto.sdui.actions.core.AsyncComponentRequest"
 PAGINATION_REQUEST_TYPE = "proto.sdui.actions.requests.PaginationRequest"
 SKILLS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.skills"
+EDUCATION_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.education"
 PROJECTS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.projects"
 SKILLS_ALL_FILTER = "ProfileSkillCategory_ALL"
 PROFILE_DETAILS_SECTIONS = frozenset(
@@ -289,6 +290,14 @@ def extract_projects_pagination_request(
     return _extract_pagination_request(document, PROJECTS_PAGER_ID)
 
 
+def extract_education_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Education pager embedded in a details or page response."""
+
+    return _extract_pagination_request(document, EDUCATION_PAGER_ID)
+
+
 def _extract_pagination_request(
     document: ComoFlightDocument,
     pager_id: str,
@@ -400,49 +409,56 @@ def extract_education_from_flight(
     education: list[Education] = []
     seen: set[tuple[str, str | None, int]] = set()
     for root in document.records.values():
-        school_urls = {
-            value
-            for value in _walk(root)
-            if isinstance(value, str)
-            and value.startswith("https://www.linkedin.com/school/")
-        }
-        if len(school_urls) != 1:
-            continue
-        texts = [text.strip() for text in _visible_text(root, document) if text.strip()]
-        if not texts:
-            continue
-        school_name = texts[0]
-        dated_entry = next(
-            (
-                (index, parsed)
-                for index, text in enumerate(texts[1:], start=1)
-                if (parsed := _parse_education_dates(text)) is not None
-            ),
-            None,
-        )
-        date_index, dates = (
-            dated_entry if dated_entry is not None else (len(texts), None)
-        )
-        program = texts[1] if len(texts) > 1 and date_index > 1 else None
-        degree_name, field_of_study = _split_education_program(program)
-        start_date, end_date = dates if dates is not None else (None, None)
-        identity = (
-            school_name,
-            degree_name,
-            start_date.year if start_date is not None and start_date.year else 0,
-        )
-        if identity in seen:
-            continue
-        seen.add(identity)
-        education.append(
-            Education(
-                school_name=school_name,
-                degree_name=degree_name,
-                field_of_study=field_of_study,
-                start_date=start_date,
-                end_date=end_date,
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            school_urls = {
+                value
+                for value in _walk(candidate)
+                if isinstance(value, str)
+                and value.startswith("https://www.linkedin.com/school/")
+            }
+            if len(school_urls) != 1:
+                continue
+            texts = [
+                text.strip()
+                for text in _visible_text(candidate, document)
+                if text.strip()
+            ]
+            if not texts:
+                continue
+            school_name = texts[0]
+            dated_entry = next(
+                (
+                    (index, parsed)
+                    for index, text in enumerate(texts[1:], start=1)
+                    if (parsed := _parse_education_dates(text)) is not None
+                ),
+                None,
             )
-        )
+            date_index, dates = (
+                dated_entry if dated_entry is not None else (len(texts), None)
+            )
+            program = texts[1] if len(texts) > 1 and date_index > 1 else None
+            degree_name, field_of_study = _split_education_program(program)
+            start_date, end_date = dates if dates is not None else (None, None)
+            identity = (
+                school_name,
+                degree_name,
+                start_date.year if start_date is not None and start_date.year else 0,
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            education.append(
+                Education(
+                    school_name=school_name,
+                    degree_name=degree_name,
+                    field_of_study=field_of_study,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            )
     return education
 
 
@@ -451,19 +467,24 @@ def extract_skills_from_flight(document: ComoFlightDocument) -> list[str]:
 
     skills: list[str] = []
     for root in document.records.values():
-        if not (
-            isinstance(root, list)
-            and len(root) >= 4
-            and isinstance(root[3], dict)
-            and isinstance(root[3].get("componentKey"), str)
-            and str(root[3]["componentKey"]).startswith(
-                "com.linkedin.sdui.profile.skill("
-            )
-        ):
-            continue
-        texts = [text.strip() for text in _visible_text(root, document) if text.strip()]
-        if texts and texts[0] not in skills:
-            skills.append(texts[0])
+        for candidate in _walk(root):
+            if not (
+                isinstance(candidate, list)
+                and len(candidate) >= 4
+                and isinstance(candidate[3], dict)
+                and isinstance(candidate[3].get("componentKey"), str)
+                and str(candidate[3]["componentKey"]).startswith(
+                    "com.linkedin.sdui.profile.skill("
+                )
+            ):
+                continue
+            texts = [
+                text.strip()
+                for text in _visible_text(candidate, document)
+                if text.strip()
+            ]
+            if texts and texts[0] not in skills:
+                skills.append(texts[0])
     return skills
 
 

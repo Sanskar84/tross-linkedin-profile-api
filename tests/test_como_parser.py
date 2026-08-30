@@ -1158,24 +1158,20 @@ async def test_ssr_client_falls_back_to_detail_pages_when_preview_cards_are_miss
             ),
         ]
     )
-    education_html = hydration_html(
-        [
-            (
-                '0:["$","button",null,{"url":'
-                '"https://www.linkedin.com/school/123/",'
-                '"children":["$L1","$L2","$L3"]}]'
-            ),
-            (
-                '1:["$","span",null,{"children":'
-                '["Annamacharya Institute Of Technology And Sciences Kadapa"]}]'
-            ),
-            (
-                '2:["$","span",null,{"children":'
-                '["Bachelor of Technology - BTech, Computer Science"]}]'
-            ),
-            '3:["$","span",null,{"children":["Aug 2019 – May 2023"]}]',
-        ]
-    )
+    education_request = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": "com.linkedin.sdui.pagers.profile.details.education",
+        "requestedArguments": {
+            "payload": {
+                "vanityName": "hari-chintaparthi",
+                "profileId": "member-id",
+                "start": 0,
+                "count": 20,
+                "detailSectionReplaceableComponentRef": "component-ref",
+            }
+        },
+    }
+    education_html = hydration_html([f"0:{json.dumps(education_request)}"])
     skills_request = {
         "$type": "proto.sdui.actions.requests.PaginationRequest",
         "pagerId": "com.linkedin.sdui.pagers.profile.details.skills",
@@ -1217,23 +1213,52 @@ async def test_ssr_client_falls_back_to_detail_pages_when_preview_cards_are_miss
 
     class FakePaginationTransport:
         def __init__(self) -> None:
-            self.calls = 0
+            self.pager_ids: list[str] = []
 
         async def fetch_page(
             self,
             request: SduiPaginationRequest,
             screen_id: str,
         ) -> ComoFlightDocument:
+            self.pager_ids.append(request.pager_id)
+            if request.pager_id.endswith(".education"):
+                assert screen_id.endswith(".ProfileEducationDetails")
+                return parse_flight_stream(
+                    flight_stream(
+                        [
+                            (
+                                '0:["$","div",null,{"children":'
+                                '[["$","button",null,{"url":'
+                                '"https://www.linkedin.com/school/123/",'
+                                '"children":["$L1","$L2","$L3"]}]]}]'
+                            ),
+                            (
+                                '1:["$","span",null,{"children":'
+                                '["Annamacharya Institute Of Technology And '
+                                'Sciences Kadapa"]}]'
+                            ),
+                            (
+                                '2:["$","span",null,{"children":'
+                                '["Bachelor of Technology - BTech, Computer '
+                                'Science"]}]'
+                            ),
+                            (
+                                '3:["$","span",null,{"children":'
+                                '["Aug 2019 – May 2023"]}]'
+                            ),
+                        ]
+                    )
+                )
             assert request.pager_id.endswith(".skills")
             assert screen_id.endswith(".ProfileSkillDetails")
-            self.calls += 1
             return parse_flight_stream(
                 flight_stream(
                     [
                         (
-                            '0:["$","div",null,{"componentKey":'
+                            '0:["$","div",null,{"children":'
+                            '[["$","div",null,{"componentKey":'
                             '"com.linkedin.sdui.profile.skill(member, 1)",'
-                            '"children":["$L1"]}]'
+                            '"children":["$L1"]}]]}]'
                         ),
                         '1:["$","span",null,{"children":["Data Science"]}]',
                     ]
@@ -1263,7 +1288,10 @@ async def test_ssr_client_falls_back_to_detail_pages_when_preview_cards_are_miss
         ("hari-chintaparthi", "education"),
         ("hari-chintaparthi", "skills"),
     ]
-    assert pagination_transport.calls == 1
+    assert pagination_transport.pager_ids == [
+        "com.linkedin.sdui.pagers.profile.details.education",
+        "com.linkedin.sdui.pagers.profile.details.skills",
+    ]
 
 
 @pytest.mark.asyncio
