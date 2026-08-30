@@ -1,6 +1,7 @@
 """LinkedIn profile request validation and normalized response models."""
 
 import re
+from typing import Literal
 from urllib.parse import unquote
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
@@ -89,6 +90,31 @@ class Project(BaseModel):
     end_date: DateParts | None = None
 
 
+class TestScore(BaseModel):
+    name: str
+    score: str | None = None
+    date: str | None = None
+    description: str | None = None
+
+
+class Publication(BaseModel):
+    title: str
+    publisher: str | None = None
+    published_on: str | None = None
+    description: str | None = None
+    url: str | None = None
+
+
+class Recommendation(BaseModel):
+    type: Literal["received", "given"]
+    person_name: str
+    person_profile_url: str | None = None
+    headline: str | None = None
+    date: str | None = None
+    relationship: str | None = None
+    text: str | None = None
+
+
 class LinkedInProfile(BaseModel):
     public_identifier: str
     profile_url: str
@@ -102,6 +128,9 @@ class LinkedInProfile(BaseModel):
     education: list[Education] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     projects: list[Project] = Field(default_factory=list)
+    test_scores: list[TestScore] = Field(default_factory=list)
+    publications: list[Publication] = Field(default_factory=list)
+    recommendations: list[Recommendation] = Field(default_factory=list)
     certifications: list[Certification] = Field(default_factory=list)
     languages: list[Language] = Field(default_factory=list)
     has_profile_photo_frame: bool = False

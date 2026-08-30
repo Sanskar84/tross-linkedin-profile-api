@@ -162,7 +162,15 @@ async def test_profile_page_uses_direct_authenticated_ssr_request() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "section",
-    ["education", "experience", "projects", "skills"],
+    [
+        "education",
+        "experience",
+        "projects",
+        "publications",
+        "recommendations",
+        "skills",
+        "test-scores",
+    ],
 )
 async def test_profile_details_page_uses_validated_direct_request(section: str) -> None:
     html = '<script>window.__como_rehydration__ = ["0:{}\\n"];</script>'

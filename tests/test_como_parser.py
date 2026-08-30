@@ -19,9 +19,15 @@ from tross_linkedin_api.parsers.como import (
     extract_profile_from_como,
     extract_projects_from_flight,
     extract_projects_pagination_request,
+    extract_publications_from_flight,
+    extract_publications_pagination_request,
+    extract_recommendations_from_flight,
+    extract_recommendations_pagination_requests,
     extract_skills_details_path,
     extract_skills_from_flight,
     extract_skills_pagination_request,
+    extract_test_scores_from_flight,
+    extract_test_scores_pagination_request,
     parse_como_flight,
     parse_flight_stream,
 )
@@ -435,6 +441,211 @@ def test_extract_skills_from_component_flight_stream() -> None:
     assert extract_skills_from_flight(document) == ["Python", "FastAPI"]
 
 
+def test_extract_test_scores_from_paginated_rows() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":['
+                    '["$","div",null,{"children":["$L1","$L2","$L3"]}],'
+                    '["$","hr",null,{}],'
+                    '["$","div",null,{"children":["$L4","$L5"]}]]}]'
+                ),
+                '1:["$","p",null,{"children":["BITS HD Test"]}]',
+                '2:["$","p",null,{"children":["Score: 119 · Aug 2021"]}]',
+                (
+                    '3:["$","p",null,{"children":'
+                    '["Attempted Software Systems."]}]'
+                ),
+                '4:["$","p",null,{"children":["GATE - CS/IT"]}]',
+                '5:["$","p",null,{"children":["Score: 700 · Feb 2021"]}]',
+            ]
+        )
+    )
+
+    assert [item.model_dump() for item in extract_test_scores_from_flight(document)] == [
+        {
+            "name": "BITS HD Test",
+            "score": "119",
+            "date": "Aug 2021",
+            "description": "Attempted Software Systems.",
+        },
+        {
+            "name": "GATE - CS/IT",
+            "score": "700",
+            "date": "Feb 2021",
+            "description": None,
+        },
+    ]
+
+
+def test_extract_publications_from_paginated_rows() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":['
+                    '["$","div",null,{"children":["$L1","$L2","$L3","$L4"]}],'
+                    '["$","hr",null,{}],'
+                    '["$","div",null,{"children":["$L5","$L6"]}]]}]'
+                ),
+                (
+                    '1:["$","a",null,{"url":'
+                    '"https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fexample.com%2Fpaper",'
+                    '"children":["Paper One"]}]'
+                ),
+                (
+                    '2:["$","p",null,{"children":'
+                    '["Example Journal · Jun 12, 2020"]}]'
+                ),
+                '3:["$","p",null,{"children":["Paper description."]}]',
+                '4:["$","p",null,{"children":["Other authors"]}]',
+                '5:["$","p",null,{"children":["Paper Two"]}]',
+                (
+                    '6:["$","p",null,{"children":'
+                    '["Second Journal · May 2, 2020"]}]'
+                ),
+            ]
+        )
+    )
+
+    assert [item.model_dump() for item in extract_publications_from_flight(document)] == [
+        {
+            "title": "Paper One",
+            "publisher": "Example Journal",
+            "published_on": "Jun 12, 2020",
+            "description": "Paper description.",
+            "url": "https://example.com/paper",
+        },
+        {
+            "title": "Paper Two",
+            "publisher": "Second Journal",
+            "published_on": "May 2, 2020",
+            "description": None,
+            "url": None,
+        },
+    ]
+
+
+def test_extract_given_recommendations_from_rows() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":['
+                    '["$","div",null,{"children":["$L1","$L2","$L3","$L4"]}],'
+                    '["$","hr",null,{}],'
+                    '["$","div",null,{"children":["$L5","$L6","$L7"]}]]}]'
+                ),
+                (
+                    '1:["$","a",null,{"url":'
+                    '"https://www.linkedin.com/in/mohit/","children":["Mohit"]}]'
+                ),
+                '2:["$","p",null,{"children":["Software Engineer"]}]',
+                (
+                    '3:["$","p",null,{"children":'
+                    '["March 18, 2025, Raj was Mohit’s mentor"]}]'
+                ),
+                '4:["$","p",null,{"children":["Excellent engineer."]}]',
+                (
+                    '5:["$","a",null,{"url":'
+                    '"https://www.linkedin.com/in/ayushi/","children":["Ayushi"]}]'
+                ),
+                (
+                    '6:["$","p",null,{"children":'
+                    '["April 25, 2021, Raj was Ayushi’s client"]}]'
+                ),
+                '7:["$","p",null,{"children":["Creative and dedicated."]}]',
+            ]
+        )
+    )
+
+    assert [
+        item.model_dump()
+        for item in extract_recommendations_from_flight(document, "given")
+    ] == [
+        {
+            "type": "given",
+            "person_name": "Mohit",
+            "person_profile_url": "https://www.linkedin.com/in/mohit/",
+            "headline": "Software Engineer",
+            "date": "March 18, 2025",
+            "relationship": "Raj was Mohit’s mentor",
+            "text": "Excellent engineer.",
+        },
+        {
+            "type": "given",
+            "person_name": "Ayushi",
+            "person_profile_url": "https://www.linkedin.com/in/ayushi/",
+            "headline": None,
+            "date": "April 25, 2021",
+            "relationship": "Raj was Ayushi’s client",
+            "text": "Creative and dedicated.",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("pager_id", "extractor"),
+    [
+        (
+            "com.linkedin.sdui.pagers.profile.details.publications",
+            extract_publications_pagination_request,
+        ),
+        (
+            "com.linkedin.sdui.pagers.profile.details.testscores",
+            extract_test_scores_pagination_request,
+        ),
+    ],
+)
+def test_extract_new_section_pagination_request(pager_id, extractor) -> None:
+    raw_request = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": pager_id,
+        "requestedArguments": {
+            "payload": {"vanityName": "ada", "start": 0, "count": 10}
+        },
+    }
+    document = parse_flight_stream(
+        flight_stream([f"0:{json.dumps(raw_request)}"])
+    )
+
+    assert extractor(document) == SduiPaginationRequest(
+        pager_id=pager_id,
+        requested_arguments=raw_request["requestedArguments"],
+        raw_request=raw_request,
+    )
+
+
+def test_extract_received_and_given_recommendation_pagers() -> None:
+    requests = []
+    for recommendation_type in ("Received", "Given"):
+        requests.append(
+            {
+                "$type": "proto.sdui.actions.requests.PaginationRequest",
+                "pagerId": "com.linkedin.sdui.pagers.profile.details.recommendations",
+                "requestedArguments": {
+                    "payload": {
+                        "type": recommendation_type,
+                        "vanityName": "ada",
+                        "start": 0,
+                        "count": 15,
+                    }
+                },
+            }
+        )
+    document = parse_flight_stream(
+        flight_stream([f"{index}:{json.dumps(value)}" for index, value in enumerate(requests)])
+    )
+
+    extracted = extract_recommendations_pagination_requests(document)
+
+    assert [request.requested_arguments["payload"]["type"] for request in extracted] == [
+        "Received",
+        "Given",
+    ]
+
+
 def test_extract_skills_details_path_from_preview_component() -> None:
     document = parse_flight_stream(
         flight_stream(
@@ -803,6 +1014,9 @@ def test_extract_profile_from_top_card_component() -> None:
         "education": [],
         "skills": [],
         "projects": [],
+        "test_scores": [],
+        "publications": [],
+        "recommendations": [],
         "certifications": [],
         "languages": [],
         "has_profile_photo_frame": False,
@@ -1027,6 +1241,205 @@ async def test_ssr_client_fetches_and_normalizes_profile_page() -> None:
         "com.linkedin.profileCardsBelowActivityPart1WithoutExp",
         "com.linkedin.profileCardsBelowActivityPart4",
         "com.linkedin.profileCardsBelowActivityPart7",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ssr_client_fetches_full_publications_scores_and_recommendations() -> None:
+    profile_html = hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Ada","familyName":"Lovelace"}},'
+                '"requests":[{"$type":"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart2",'
+                '"requestedArguments":{}},{"$type":'
+                '"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart3",'
+                '"requestedArguments":{}}]}]'
+            ),
+        ]
+    )
+
+    def pager(pager_id: str, payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "$type": "proto.sdui.actions.requests.PaginationRequest",
+            "pagerId": pager_id,
+            "requestedArguments": {"payload": payload},
+        }
+
+    detail_requests = {
+        "publications": [
+            pager(
+                "com.linkedin.sdui.pagers.profile.details.publications",
+                {"vanityName": "ada-lovelace", "start": 0, "count": 10},
+            )
+        ],
+        "test-scores": [
+            pager(
+                "com.linkedin.sdui.pagers.profile.details.testscores",
+                {"vanityName": "ada-lovelace", "start": 0, "count": 10},
+            )
+        ],
+        "recommendations": [
+            pager(
+                "com.linkedin.sdui.pagers.profile.details.recommendations",
+                {
+                    "type": recommendation_type,
+                    "vanityName": "ada-lovelace",
+                    "start": 0,
+                    "count": 15,
+                },
+            )
+            for recommendation_type in ("Received", "Given")
+        ],
+    }
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.details_calls: list[tuple[str, str]] = []
+
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(profile_html, "text/html", len(profile_html))
+
+        async def fetch_profile_details_page(
+            self,
+            public_identifier: str,
+            section: str,
+        ) -> ProfilePageDocument:
+            self.details_calls.append((public_identifier, section))
+            if section not in detail_requests:
+                html = hydration_html(['0:["$","div",null,{"children":[]}]'])
+                return ProfilePageDocument(html, "text/html", len(html))
+            records = [
+                f"{index}:{json.dumps(value)}"
+                for index, value in enumerate(detail_requests[section])
+            ]
+            html = hydration_html(records)
+            return ProfilePageDocument(html, "text/html", len(html))
+
+    class FakeComponentTransport:
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            if request.component_id.endswith("Part2"):
+                return parse_flight_stream(
+                    flight_stream(
+                        [
+                            (
+                                '0:["$","div",null,{"children":['
+                                '"Recommendations","$L1","$L2","$L3"]}]'
+                            ),
+                            (
+                                '1:["$","a",null,{"url":'
+                                '"https://www.linkedin.com/in/grace/",'
+                                '"children":["Grace"]}]'
+                            ),
+                            (
+                                '2:["$","p",null,{"children":'
+                                '["March 1, 2024, Grace managed Ada"]}]'
+                            ),
+                            '3:["$","p",null,{"children":["Excellent work."]}]',
+                        ]
+                    )
+                )
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        (
+                            '0:["$","div",null,{"children":['
+                            '"/in/ada-lovelace/details/publications/",'
+                            '"/in/ada-lovelace/details/test-scores/"]}]'
+                        )
+                    ]
+                )
+            )
+
+    class FakePaginationTransport:
+        async def fetch_page(
+            self,
+            request: SduiPaginationRequest,
+            screen_id: str,
+        ) -> ComoFlightDocument:
+            if request.pager_id.endswith(".publications"):
+                assert screen_id.endswith(".ProfilePublicationDetails")
+                return parse_flight_stream(
+                    flight_stream(
+                        [
+                            (
+                                '0:["$","div",null,{"children":['
+                                '"$L1","$L2","$L3"]}]'
+                            ),
+                            '1:["$","p",null,{"children":["Paper"]}]',
+                            (
+                                '2:["$","p",null,{"children":'
+                                '["Journal · Jun 12, 2020"]}]'
+                            ),
+                            '3:["$","p",null,{"children":["Description"]}]',
+                        ]
+                    )
+                )
+            if request.pager_id.endswith(".testscores"):
+                assert screen_id.endswith(".ProfileTestScoreDetails")
+                return parse_flight_stream(
+                    flight_stream(
+                        [
+                            '0:["$","div",null,{"children":["$L1","$L2"]}]',
+                            '1:["$","p",null,{"children":["GATE"]}]',
+                            '2:["$","p",null,{"children":["Score: 700 · Feb 2021"]}]',
+                        ]
+                    )
+                )
+            assert screen_id.endswith(".ProfileRecommendationDetails")
+            recommendation_type = request.requested_arguments["payload"]["type"]
+            if recommendation_type == "Given":
+                return parse_flight_stream(
+                    '0:["$","div",null,{"children":[]}]\n'
+                )
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        '0:["$","div",null,{"children":["$L1","$L2","$L3"]}]',
+                        (
+                            '1:["$","a",null,{"url":'
+                            '"https://www.linkedin.com/in/grace/",'
+                            '"children":["Grace"]}]'
+                        ),
+                        (
+                            '2:["$","p",null,{"children":'
+                            '["March 1, 2024, Grace managed Ada"]}]'
+                        ),
+                        '3:["$","p",null,{"children":["Excellent work."]}]',
+                    ]
+                )
+            )
+
+    transport = FakeTransport()
+    client = SsrLinkedInProfileClient(
+        transport,
+        FakeComponentTransport(),
+        transport,
+        FakePaginationTransport(),
+    )
+
+    profile = await client.fetch_profile(
+        ProfileRequest(profile_url="https://www.linkedin.com/in/ada-lovelace/")
+    )
+
+    assert [item.title for item in profile.publications] == ["Paper"]
+    assert [item.name for item in profile.test_scores] == ["GATE"]
+    assert [item.person_name for item in profile.recommendations] == ["Grace"]
+    assert transport.details_calls[:3] == [
+        ("ada-lovelace", "recommendations"),
+        ("ada-lovelace", "publications"),
+        ("ada-lovelace", "test-scores"),
     ]
 
 

@@ -40,7 +40,8 @@ GET /in/<vanity>/                         (SSR HTML)
              |
              +--> POST /flagship-web/rsc-action/actions/component
                   for About, experience, education/certifications/projects,
-                  languages, and skills
+                  recommendations, publications/test scores, languages,
+                  and skills
                          |
                          +--> when Experience exposes "Show all experiences"
                          |    GET /in/<vanity>/details/experience/
@@ -54,6 +55,10 @@ GET /in/<vanity>/                         (SSR HTML)
                          |    GET /in/<vanity>/details/projects/
                          |    POST /flagship-web/rsc-action/actions/pagination
                          |    until the embedded pager has no next request
+                         |
+                         +--> GET recommendation/publication/test-score details
+                         |    and POST their embedded Received/Given or list pagers
+                         |    when the corresponding profile cards are present
                          |
                          +--> when Skills exposes "Show all skills"
                               GET /in/<vanity>/details/skills/
@@ -142,6 +147,8 @@ Supported component suffixes are:
 | `profileCardsAboveActivity` | `about` |
 | `profileCardsExperienceOnly` | `experiences` plus complete Experience detail discovery |
 | `profileCardsBelowActivityPart1WithoutExp` | `education`, `certifications`, `projects` |
+| `profileCardsBelowActivityPart2` | `recommendations` (`received` and `given`) |
+| `profileCardsBelowActivityPart3` | `publications`, `test_scores` |
 | `profileCardsBelowActivityPart4` | `languages` |
 | `profileCardsBelowActivityPart7` | `skills` |
 
@@ -167,6 +174,17 @@ card even though the corresponding details page contains data:
   pagination action. Project rows are separated by LinkedIn's divider elements
   and normalized into title, description, external URL, summarized skills, and
   optional dates.
+- Recommendations: Part 2 triggers a direct GET of
+  `/in/<vanity>/details/recommendations/`. The service separately forwards the
+  embedded `Received` and `Given` pagers and returns each entry with its type,
+  person name/profile URL, headline, relationship date/text, and recommendation
+  body. Empty tabs remain empty rather than being inferred from the other tab.
+- Publications and Test scores: Part 3 supplies previews and validated detail
+  links. When a full view is available, the service forwards
+  `com.linkedin.sdui.pagers.profile.details.publications` or
+  `com.linkedin.sdui.pagers.profile.details.testscores`. Publications preserve
+  publisher, exact displayed date, description, and decoded external URL; Test
+  scores preserve the score, displayed month/year, and description.
 - Skills: a validated `/in/<vanity>/details/skills/` link triggers a direct GET.
   The service selects the embedded
   `com.linkedin.sdui.pagers.profile.details.skills` request whose filter is
@@ -278,6 +296,9 @@ The response contains a `profile` object with this stable shape:
     "education": [],
     "skills": [],
     "projects": [],
+    "test_scores": [],
+    "publications": [],
+    "recommendations": [],
     "certifications": [],
     "languages": [],
     "has_profile_photo_frame": false,
@@ -424,6 +445,8 @@ it does not launch a browser or require network access. Coverage includes:
   normalized divided rows, and optional project metadata.
 - Skills SDUI pagination request forwarding, multi-page aggregation, duplicate
   suppression, bounded-loop protection, and missing-preview fallback.
+- Publication, Test score, and Received/Given Recommendation detail-page pager
+  forwarding, row normalization, direction labeling, and duplicate suppression.
 - Direct Education details-page fallback when the main profile omits or empties
   the Education preview component.
 - Malformed/opaque Flight records and request descriptor extraction.
@@ -448,7 +471,10 @@ checkpoint handling as production and must not commit raw responses or session
 state.
 
 Recent direct-HTTP validation covered representative public profiles with empty
-and non-empty sections. In particular, a populated language component with
+and non-empty sections. A live profile returned six complete Test score rows,
+two Publications, and ten skills from the dedicated `ProfileSkillCategory_ALL`
+pager. Separate profiles returned populated Given Recommendations with person,
+relationship, and full recommendation text. In addition, a language component with
 divider-separated language-only rows was observed and normalized as separate
 entries with `proficiency: null`; partial education cards were also observed and
 preserved. A live Projects details page was validated with four projects,

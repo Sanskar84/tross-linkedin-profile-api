@@ -93,7 +93,15 @@ PROFILE_PAGE_ACCEPT = (
     "image/avif,image/webp,*/*;q=0.8"
 )
 PROFILE_DETAILS_SECTIONS = frozenset(
-    {"education", "experience", "projects", "skills"}
+    {
+        "education",
+        "experience",
+        "projects",
+        "publications",
+        "recommendations",
+        "skills",
+        "test-scores",
+    }
 )
 SDUI_IDENTIFIER_PATTERN = re.compile(r"com\.linkedin\.sdui\.[A-Za-z0-9_.]+")
 RSC_ACTION_PATHS = (

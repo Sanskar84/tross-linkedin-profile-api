@@ -1,7 +1,7 @@
 """Profile client backed by LinkedIn's authenticated SSR response."""
 
 import json
-from typing import Protocol
+from typing import Literal, Protocol
 
 from tross_linkedin_api.clients.linkedin import ProfilePageDocument
 from tross_linkedin_api.errors import LinkedInInvalidResponseError
@@ -21,9 +21,16 @@ from tross_linkedin_api.parsers.como import (
     extract_profile_from_como,
     extract_projects_from_flight,
     extract_projects_pagination_request,
+    extract_publications_from_flight,
+    extract_publications_pagination_request,
+    extract_recommendations_from_flight,
+    extract_recommendations_pagination_requests,
     extract_skills_details_path,
     extract_skills_from_flight,
     extract_skills_pagination_request,
+    extract_test_scores_from_flight,
+    extract_test_scores_pagination_request,
+    has_recommendations_section,
     parse_como_flight,
 )
 from tross_linkedin_api.schemas.profile import (
@@ -32,6 +39,9 @@ from tross_linkedin_api.schemas.profile import (
     Position,
     ProfileRequest,
     Project,
+    Publication,
+    Recommendation,
+    TestScore,
 )
 
 
@@ -73,9 +83,21 @@ class PaginationFetcher(Protocol):
 SKILLS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileSkillDetails"
 EDUCATION_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileEducationDetails"
 PROJECTS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileProjectDetails"
+PUBLICATIONS_SCREEN_ID = (
+    "com.linkedin.sdui.flagshipnav.profile.ProfilePublicationDetails"
+)
+RECOMMENDATIONS_SCREEN_ID = (
+    "com.linkedin.sdui.flagshipnav.profile.ProfileRecommendationDetails"
+)
+TEST_SCORES_SCREEN_ID = (
+    "com.linkedin.sdui.flagshipnav.profile.ProfileTestScoreDetails"
+)
 MAX_SKILLS_PAGES = 20
 MAX_EDUCATION_PAGES = 20
 MAX_PROJECTS_PAGES = 20
+MAX_PUBLICATION_PAGES = 20
+MAX_RECOMMENDATION_PAGES = 20
+MAX_TEST_SCORE_PAGES = 20
 
 
 class SsrLinkedInProfileClient:
@@ -111,6 +133,8 @@ class SsrLinkedInProfileClient:
                     "profileCardsAboveActivity",
                     "profileCardsExperienceOnly",
                     "profileCardsBelowActivityPart1WithoutExp",
+                    "profileCardsBelowActivityPart2",
+                    "profileCardsBelowActivityPart3",
                     "profileCardsBelowActivityPart4",
                     "profileCardsBelowActivityPart7",
                 )
@@ -150,6 +174,53 @@ class SsrLinkedInProfileClient:
                     updates["projects"] = await self._fetch_all_projects(
                         request.public_identifier
                     )
+            elif component_id.endswith("profileCardsBelowActivityPart2"):
+                if (
+                    has_recommendations_section(component)
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["recommendations"] = (
+                        await self._fetch_all_recommendations(
+                            request.public_identifier
+                        )
+                    )
+            elif component_id.endswith("profileCardsBelowActivityPart3"):
+                preview_publications = extract_publications_from_flight(component)
+                publications_path = extract_profile_details_path(
+                    component,
+                    "publications",
+                )
+                if (
+                    publications_path
+                    == f"/in/{request.public_identifier}/details/publications/"
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["publications"] = await self._fetch_all_publications(
+                        request.public_identifier,
+                        preview_publications,
+                    )
+                else:
+                    updates["publications"] = preview_publications
+
+                preview_test_scores = extract_test_scores_from_flight(component)
+                test_scores_path = extract_profile_details_path(
+                    component,
+                    "test-scores",
+                )
+                if (
+                    test_scores_path
+                    == f"/in/{request.public_identifier}/details/test-scores/"
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["test_scores"] = await self._fetch_all_test_scores(
+                        request.public_identifier,
+                        preview_test_scores,
+                    )
+                else:
+                    updates["test_scores"] = preview_test_scores
             elif component_id.endswith("profileCardsBelowActivityPart4"):
                 updates["languages"] = extract_languages_from_flight(component)
             elif component_id.endswith("profileCardsBelowActivityPart7"):
@@ -276,6 +347,147 @@ class SsrLinkedInProfileClient:
             pagination_request = next_request
         raise LinkedInInvalidResponseError
 
+    async def _fetch_all_publications(
+        self,
+        public_identifier: str,
+        preview_publications: list[Publication],
+    ) -> list[Publication]:
+        assert self._details_transport is not None
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "publications",
+        )
+        inline_publications = extract_publications_from_flight(details_document)
+        pagination_request = extract_publications_pagination_request(details_document)
+        if pagination_request is None:
+            return inline_publications or preview_publications
+
+        publications: list[Publication] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_PUBLICATION_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                PUBLICATIONS_SCREEN_ID,
+            )
+            for publication in extract_publications_from_flight(page):
+                if publication not in publications:
+                    publications.append(publication)
+            next_request = extract_publications_pagination_request(page)
+            if next_request is None:
+                return publications or inline_publications or preview_publications
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
+
+    async def _fetch_all_test_scores(
+        self,
+        public_identifier: str,
+        preview_scores: list[TestScore],
+    ) -> list[TestScore]:
+        assert self._details_transport is not None
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "test-scores",
+        )
+        inline_scores = extract_test_scores_from_flight(details_document)
+        pagination_request = extract_test_scores_pagination_request(details_document)
+        if pagination_request is None:
+            return inline_scores or preview_scores
+
+        scores: list[TestScore] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_TEST_SCORE_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                TEST_SCORES_SCREEN_ID,
+            )
+            for score in extract_test_scores_from_flight(page):
+                if score not in scores:
+                    scores.append(score)
+            next_request = extract_test_scores_pagination_request(page)
+            if next_request is None:
+                return scores or inline_scores or preview_scores
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
+
+    async def _fetch_all_recommendations(
+        self,
+        public_identifier: str,
+    ) -> list[Recommendation]:
+        assert self._details_transport is not None
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "recommendations",
+        )
+        recommendations: list[Recommendation] = []
+        for pagination_request in extract_recommendations_pagination_requests(
+            details_document
+        ):
+            payload = pagination_request.payload()
+            assert payload is not None
+            raw_type = payload.get("type")
+            if not isinstance(raw_type, str) or raw_type not in {"Received", "Given"}:
+                continue
+            recommendation_type: Literal["received", "given"] = (
+                "received" if raw_type == "Received" else "given"
+            )
+            seen_requests: set[str] = set()
+            for _ in range(MAX_RECOMMENDATION_PAGES):
+                request_key = _pagination_request_key(pagination_request)
+                if request_key in seen_requests:
+                    raise LinkedInInvalidResponseError
+                seen_requests.add(request_key)
+                page = await self._pagination_transport.fetch_page(
+                    pagination_request,
+                    RECOMMENDATIONS_SCREEN_ID,
+                )
+                for recommendation in extract_recommendations_from_flight(
+                    page,
+                    recommendation_type,
+                ):
+                    if recommendation not in recommendations:
+                        recommendations.append(recommendation)
+                next_requests = extract_recommendations_pagination_requests(page)
+                next_request = next(
+                    (
+                        request
+                        for request in next_requests
+                        if _pagination_request_type(request) == raw_type
+                    ),
+                    None,
+                )
+                if next_request is None:
+                    break
+                pagination_request = next_request
+            else:
+                raise LinkedInInvalidResponseError
+        return recommendations
+
+    async def _fetch_details_document(
+        self,
+        public_identifier: str,
+        section: str,
+    ) -> ComoFlightDocument:
+        assert self._details_transport is not None
+        details_page = await self._details_transport.fetch_profile_details_page(
+            public_identifier,
+            section,
+        )
+        try:
+            return parse_como_flight(details_page.html)
+        except ComoFlightParseError as error:
+            raise LinkedInInvalidResponseError from error
+
     async def _fetch_all_skills(
         self,
         public_identifier: str,
@@ -326,3 +538,9 @@ def _pagination_request_key(request: SduiPaginationRequest) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _pagination_request_type(request: SduiPaginationRequest) -> str | None:
+    payload = request.payload()
+    value = payload.get("type") if payload is not None else None
+    return value if isinstance(value, str) else None

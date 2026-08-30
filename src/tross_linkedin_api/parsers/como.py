@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 
 from tross_linkedin_api.schemas.profile import (
@@ -15,6 +16,9 @@ from tross_linkedin_api.schemas.profile import (
     Position,
     ProfileImage,
     Project,
+    Publication,
+    Recommendation,
+    TestScore,
 )
 
 type JSONScalar = str | int | float | bool | None
@@ -29,6 +33,9 @@ ASYNC_COMPONENT_REQUEST_TYPE = "proto.sdui.actions.core.AsyncComponentRequest"
 PAGINATION_REQUEST_TYPE = "proto.sdui.actions.requests.PaginationRequest"
 SKILLS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.skills"
 EDUCATION_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.education"
+PUBLICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.publications"
+RECOMMENDATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.recommendations"
+TEST_SCORES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.testscores"
 UUID_COMPONENT_KEY_PATTERN = re.compile(
     r"^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -36,7 +43,15 @@ UUID_COMPONENT_KEY_PATTERN = re.compile(
 PROJECTS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.projects"
 SKILLS_ALL_FILTER = "ProfileSkillCategory_ALL"
 PROFILE_DETAILS_SECTIONS = frozenset(
-    {"education", "experience", "projects", "skills"}
+    {
+        "education",
+        "experience",
+        "projects",
+        "publications",
+        "recommendations",
+        "skills",
+        "test-scores",
+    }
 )
 EXPERIENCE_DATE_PATTERN = re.compile(
     r"^(?:(?P<start_month>[A-Z][a-z]{2}) )?(?P<start_year>\d{4}) [–-] "
@@ -50,6 +65,14 @@ EDUCATION_DATE_PATTERN = re.compile(
     r"^(?:(?P<start_month>[A-Z][a-z]{2}) )?(?P<start_year>\d{4}) "
     r"[–-] (?:(?P<end_month>[A-Z][a-z]{2}) )?(?P<end_year>\d{4})"
 )
+TEST_SCORE_PATTERN = re.compile(r"^Score:\s*(?P<score>.+?)\s*·\s*(?P<date>.+)$")
+PUBLICATION_META_PATTERN = re.compile(
+    r"^(?P<publisher>.+?)\s*·\s*(?P<date>[A-Z][a-z]+ \d{1,2}, \d{4})$"
+)
+RECOMMENDATION_RELATIONSHIP_PATTERN = re.compile(
+    r"^(?P<date>[A-Z][a-z]+ \d{1,2}, \d{4}),\s*(?P<relationship>.+)$"
+)
+CONNECTION_DEGREE_PATTERN = re.compile(r"^·\s*\d+(?:st|nd|rd|th)$")
 CERTIFICATION_DATE_PATTERN = re.compile(
     r"^Issued (?:(?P<start_month>[A-Z][a-z]{2}) )?(?P<start_year>\d{4})"
     r"(?: · Expires (?:(?P<end_month>[A-Z][a-z]{2}) )?"
@@ -146,6 +169,10 @@ class SduiPaginationRequest:
     pager_id: str
     requested_arguments: dict[str, JSONValue]
     raw_request: dict[str, JSONValue]
+
+    def payload(self) -> dict[str, JSONValue] | None:
+        value = self.requested_arguments.get("payload")
+        return value if isinstance(value, dict) else None
 
     def client_arguments(self, screen_id: str) -> dict[str, JSONValue]:
         return {
@@ -302,10 +329,65 @@ def extract_education_pagination_request(
     return _extract_pagination_request(document, EDUCATION_PAGER_ID)
 
 
+def extract_publications_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Publications pager embedded in its details response."""
+
+    return _extract_pagination_request(document, PUBLICATIONS_PAGER_ID)
+
+
+def extract_test_scores_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Test scores pager embedded in its details response."""
+
+    return _extract_pagination_request(document, TEST_SCORES_PAGER_ID)
+
+
+def extract_recommendations_pagination_requests(
+    document: ComoFlightDocument,
+) -> list[SduiPaginationRequest]:
+    """Return the Received and Given recommendation pagers in display order."""
+
+    requests = _extract_pagination_requests(document, RECOMMENDATIONS_PAGER_ID)
+    return [
+        request
+        for request in requests
+        if _pagination_payload_type(request) in {"Received", "Given"}
+    ]
+
+
+def has_recommendations_section(document: ComoFlightDocument) -> bool:
+    """Return whether the lower-profile component exposes Recommendations."""
+
+    return any(
+        value == "Recommendations"
+        for root in document.records.values()
+        for value in _walk(root)
+    )
+
+
+def _pagination_payload_type(request: SduiPaginationRequest) -> str | None:
+    payload = request.payload()
+    value = payload.get("type") if payload is not None else None
+    return value if isinstance(value, str) else None
+
+
 def _extract_pagination_request(
     document: ComoFlightDocument,
     pager_id: str,
 ) -> SduiPaginationRequest | None:
+    requests = _extract_pagination_requests(document, pager_id)
+    return requests[0] if requests else None
+
+
+def _extract_pagination_requests(
+    document: ComoFlightDocument,
+    pager_id: str,
+) -> list[SduiPaginationRequest]:
+    requests: list[SduiPaginationRequest] = []
+    seen: set[str] = set()
     for root in document.records.values():
         for value in _walk(root):
             if not (
@@ -316,12 +398,18 @@ def _extract_pagination_request(
                 continue
             requested_arguments = value.get("requestedArguments")
             if isinstance(requested_arguments, dict):
-                return SduiPaginationRequest(
-                    pager_id=pager_id,
-                    requested_arguments=requested_arguments,
-                    raw_request=value,
+                identity = json.dumps(value, sort_keys=True, separators=(",", ":"))
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                requests.append(
+                    SduiPaginationRequest(
+                        pager_id=pager_id,
+                        requested_arguments=requested_arguments,
+                        raw_request=value,
+                    )
                 )
-    return None
+    return requests
 
 
 def extract_experiences_from_flight(
@@ -501,6 +589,164 @@ def extract_skills_from_flight(document: ComoFlightDocument) -> list[str]:
             if texts and texts[0] not in skills:
                 skills.append(texts[0])
     return skills
+
+
+def extract_test_scores_from_flight(
+    document: ComoFlightDocument,
+) -> list[TestScore]:
+    """Normalize Test score rows from preview or paginated SDUI content."""
+
+    scores: list[TestScore] = []
+    indexes: dict[tuple[str, str, str], int] = {}
+    for root in document.records.values():
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            texts = _clean_component_text(candidate, document)
+            score_entries = [
+                (index, match)
+                for index, text in enumerate(texts)
+                if (match := TEST_SCORE_PATTERN.fullmatch(text)) is not None
+            ]
+            if len(score_entries) != 1:
+                continue
+            score_index, match = score_entries[0]
+            if score_index == 0:
+                continue
+            name = texts[0]
+            description = "\n".join(texts[score_index + 1 :]) or None
+            item = TestScore(
+                name=name,
+                score=match.group("score").strip(),
+                date=match.group("date").strip(),
+                description=description,
+            )
+            identity = (item.name, item.score or "", item.date or "")
+            existing_index = indexes.get(identity)
+            if existing_index is None:
+                indexes[identity] = len(scores)
+                scores.append(item)
+            elif description and not scores[existing_index].description:
+                scores[existing_index] = item
+    return scores
+
+
+def extract_publications_from_flight(
+    document: ComoFlightDocument,
+) -> list[Publication]:
+    """Normalize Publication rows from preview or paginated SDUI content."""
+
+    publications: list[Publication] = []
+    indexes: dict[tuple[str, str], int] = {}
+    for root in document.records.values():
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            texts = _clean_component_text(candidate, document)
+            metadata_entries = [
+                (index, match)
+                for index, text in enumerate(texts)
+                if (match := PUBLICATION_META_PATTERN.fullmatch(text)) is not None
+            ]
+            if len(metadata_entries) != 1:
+                continue
+            metadata_index, match = metadata_entries[0]
+            if metadata_index == 0:
+                continue
+            title = texts[0]
+            description_parts = [
+                text
+                for text in texts[metadata_index + 1 :]
+                if text not in {"Other authors"}
+            ]
+            resolved_candidate = _resolve_references(candidate, document)
+            item = Publication(
+                title=title,
+                publisher=match.group("publisher").strip(),
+                published_on=match.group("date"),
+                description="\n".join(description_parts) or None,
+                url=_find_external_url(resolved_candidate),
+            )
+            identity = (item.title, item.published_on or "")
+            existing_index = indexes.get(identity)
+            if existing_index is None:
+                indexes[identity] = len(publications)
+                publications.append(item)
+            else:
+                existing = publications[existing_index]
+                if (
+                    (item.description and not existing.description)
+                    or (item.url and not existing.url)
+                ):
+                    publications[existing_index] = item
+    return publications
+
+
+def extract_recommendations_from_flight(
+    document: ComoFlightDocument,
+    recommendation_type: Literal["received", "given"],
+) -> list[Recommendation]:
+    """Normalize received or given Recommendation rows from SDUI content."""
+
+    if recommendation_type not in {"received", "given"}:
+        raise ValueError("Invalid recommendation type")
+    recommendations: list[Recommendation] = []
+    indexes: dict[tuple[str, str, str], int] = {}
+    for root in document.records.values():
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            resolved_candidate = _resolve_references(candidate, document)
+            profile_urls = {
+                value
+                for value in _walk(resolved_candidate)
+                if isinstance(value, str)
+                and re.match(r"^https://www\.linkedin\.com/in/[^/]+/$", value)
+            }
+            if len(profile_urls) != 1:
+                continue
+            texts = _clean_component_text(candidate, document)
+            relationship_entries = [
+                (index, match)
+                for index, text in enumerate(texts)
+                if (
+                    match := RECOMMENDATION_RELATIONSHIP_PATTERN.fullmatch(text)
+                )
+                is not None
+            ]
+            if len(relationship_entries) != 1:
+                continue
+            relationship_index, match = relationship_entries[0]
+            if relationship_index == 0:
+                continue
+            person_name = texts[0]
+            headline_parts = [
+                text
+                for text in texts[1:relationship_index]
+                if CONNECTION_DEGREE_PATTERN.fullmatch(text) is None
+            ]
+            text = "\n".join(texts[relationship_index + 1 :]) or None
+            item = Recommendation(
+                type=recommendation_type,
+                person_name=person_name,
+                person_profile_url=next(iter(profile_urls)),
+                headline=headline_parts[-1] if headline_parts else None,
+                date=match.group("date"),
+                relationship=match.group("relationship").strip(),
+                text=text,
+            )
+            identity = (
+                recommendation_type,
+                item.person_profile_url or item.person_name,
+                item.date or "",
+            )
+            existing_index = indexes.get(identity)
+            if existing_index is None:
+                indexes[identity] = len(recommendations)
+                recommendations.append(item)
+            elif text and not recommendations[existing_index].text:
+                recommendations[existing_index] = item
+    return recommendations
 
 
 def extract_projects_from_flight(document: ComoFlightDocument) -> list[Project]:
@@ -975,6 +1221,17 @@ def _component_content_text(
             if texts:
                 return texts
     return _visible_text(value, document)
+
+
+def _clean_component_text(
+    value: JSONValue,
+    document: ComoFlightDocument,
+) -> list[str]:
+    return [
+        cleaned
+        for text in _component_content_text(value, document)
+        if (cleaned := " ".join(text.split()))
+    ]
 
 
 def _find_credential_url(value: JSONValue) -> str | None:
