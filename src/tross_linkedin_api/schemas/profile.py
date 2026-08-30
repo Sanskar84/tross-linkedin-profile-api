@@ -76,6 +76,15 @@ class Course(BaseModel):
     associated_with: str | None = None
 
 
+class Honor(BaseModel):
+    title: str
+    issuer: str | None = None
+    issued_on: str | None = None
+    associated_with: str | None = None
+    description: str | None = None
+    url: str | None = None
+
+
 class Language(BaseModel):
     name: str
     proficiency: str | None = None
@@ -139,6 +148,7 @@ class LinkedInProfile(BaseModel):
     recommendations: list[Recommendation] = Field(default_factory=list)
     certifications: list[Certification] = Field(default_factory=list)
     courses: list[Course] = Field(default_factory=list)
+    honors: list[Honor] = Field(default_factory=list)
     languages: list[Language] = Field(default_factory=list)
     has_profile_photo_frame: bool = False
     profile_images: list[ProfileImage] = Field(default_factory=list)

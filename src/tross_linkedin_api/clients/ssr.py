@@ -19,6 +19,8 @@ from tross_linkedin_api.parsers.como import (
     extract_education_from_flight,
     extract_education_pagination_request,
     extract_experiences_from_flight,
+    extract_honors_from_flight,
+    extract_honors_pagination_request,
     extract_languages_from_flight,
     extract_profile_details_path,
     extract_profile_from_como,
@@ -40,6 +42,7 @@ from tross_linkedin_api.schemas.profile import (
     Certification,
     Course,
     Education,
+    Honor,
     LinkedInProfile,
     Position,
     ProfileRequest,
@@ -91,6 +94,7 @@ CERTIFICATIONS_SCREEN_ID = (
     "com.linkedin.sdui.flagshipnav.profile.ProfileCertificationDetails"
 )
 COURSES_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileCourseDetails"
+HONORS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileHonorDetails"
 PROJECTS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileProjectDetails"
 PUBLICATIONS_SCREEN_ID = (
     "com.linkedin.sdui.flagshipnav.profile.ProfilePublicationDetails"
@@ -105,6 +109,7 @@ MAX_SKILLS_PAGES = 20
 MAX_EDUCATION_PAGES = 20
 MAX_CERTIFICATION_PAGES = 20
 MAX_COURSE_PAGES = 20
+MAX_HONORS_PAGES = 20
 MAX_PROJECTS_PAGES = 20
 MAX_PUBLICATION_PAGES = 20
 MAX_RECOMMENDATION_PAGES = 20
@@ -214,6 +219,21 @@ class SsrLinkedInProfileClient:
                         )
                     )
             elif component_id.endswith("profileCardsBelowActivityPart3"):
+                preview_honors = extract_honors_from_flight(component)
+                honors_path = extract_profile_details_path(component, "honors")
+                if (
+                    honors_path
+                    == f"/in/{request.public_identifier}/details/honors/"
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["honors"] = await self._fetch_all_honors(
+                        request.public_identifier,
+                        preview_honors,
+                    )
+                else:
+                    updates["honors"] = preview_honors
+
                 preview_courses = extract_courses_from_flight(component)
                 courses_path = extract_profile_details_path(component, "courses")
                 if (
@@ -525,6 +545,47 @@ class SsrLinkedInProfileClient:
                 )
             if next_request is None:
                 return publications or inline_publications or preview_publications
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
+
+    async def _fetch_all_honors(
+        self,
+        public_identifier: str,
+        preview_honors: list[Honor],
+    ) -> list[Honor]:
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "honors",
+        )
+        inline_honors = extract_honors_from_flight(details_document)
+        pagination_request = extract_honors_pagination_request(details_document)
+        if pagination_request is None:
+            return inline_honors or preview_honors
+
+        honors: list[Honor] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_HONORS_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                HONORS_SCREEN_ID,
+            )
+            page_items = extract_honors_from_flight(page)
+            for honor in page_items:
+                if honor not in honors:
+                    honors.append(honor)
+            next_request = extract_honors_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
+            if next_request is None:
+                return honors or inline_honors or preview_honors
             pagination_request = next_request
         raise LinkedInInvalidResponseError
 

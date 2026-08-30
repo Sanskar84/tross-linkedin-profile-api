@@ -98,6 +98,7 @@ PROFILE_DETAILS_SECTIONS = frozenset(
         "courses",
         "education",
         "experience",
+        "honors",
         "projects",
         "publications",
         "recommendations",

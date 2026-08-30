@@ -165,6 +165,7 @@ async def test_profile_page_uses_direct_authenticated_ssr_request() -> None:
     [
         "education",
         "experience",
+        "honors",
         "projects",
         "publications",
         "recommendations",

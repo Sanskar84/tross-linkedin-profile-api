@@ -16,6 +16,8 @@ from tross_linkedin_api.parsers.como import (
     extract_courses_pagination_request,
     extract_education_from_flight,
     extract_experiences_from_flight,
+    extract_honors_from_flight,
+    extract_honors_pagination_request,
     extract_languages_from_flight,
     extract_profile_details_path,
     extract_profile_from_como,
@@ -527,6 +529,57 @@ def test_extract_publications_from_paginated_rows() -> None:
             "url": None,
         },
     ]
+
+
+def test_extract_honors_and_pager_from_rows() -> None:
+    next_request = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": "com.linkedin.sdui.pagers.profile.details.honors",
+        "requestedArguments": {
+            "payload": {
+                "vanityName": "ada-lovelace",
+                "profileId": "member-id",
+                "start": 10,
+                "count": 10,
+            }
+        },
+    }
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.HonorDetails",'
+                    '"children":["$L1","$L2","$L3","$L4","$L5"]}]'
+                ),
+                '1:["$","span",null,{"children":["Analytical Engine Prize"]}]',
+                (
+                    '2:["$","span",null,{"children":'
+                    '["Issued by Royal Society · Jun 1843"]}]'
+                ),
+                '3:["$","span",null,{"children":["Associated with Babbage Lab"]}]',
+                '4:["$","p",null,{"children":["Awarded for original research."]}]',
+                '5:["$","p",null,{"children":["Link: https://example.com/prize"]}]',
+                f"6:{json.dumps(next_request)}",
+            ]
+        )
+    )
+
+    assert [item.model_dump() for item in extract_honors_from_flight(document)] == [
+        {
+            "title": "Analytical Engine Prize",
+            "issuer": "Royal Society",
+            "issued_on": "Jun 1843",
+            "associated_with": "Babbage Lab",
+            "description": "Awarded for original research.",
+            "url": "https://example.com/prize",
+        }
+    ]
+    assert extract_honors_pagination_request(document) == SduiPaginationRequest(
+        pager_id="com.linkedin.sdui.pagers.profile.details.honors",
+        requested_arguments=next_request["requestedArguments"],
+        raw_request=next_request,
+    )
 
 
 def test_extract_given_recommendations_from_rows() -> None:
@@ -1191,6 +1244,7 @@ def test_extract_profile_from_top_card_component() -> None:
             "recommendations": [],
             "certifications": [],
             "courses": [],
+            "honors": [],
             "languages": [],
         "has_profile_photo_frame": False,
         "profile_images": [
@@ -1617,7 +1671,7 @@ async def test_ssr_client_fetches_full_publications_scores_and_recommendations()
 
 
 @pytest.mark.asyncio
-async def test_ssr_client_replaces_certification_and_course_previews_with_all_pages() -> None:
+async def test_ssr_client_replaces_preview_lists_with_all_pages() -> None:
     profile_html = hydration_html(
         [
             (
@@ -1654,7 +1708,7 @@ async def test_ssr_client_replaces_certification_and_course_previews_with_all_pa
 
     detail_html = {
         section: hydration_html([f"0:{json.dumps(pager(section, 0))}"])
-        for section in ("certifications", "courses")
+        for section in ("certifications", "courses", "honors")
     }
 
     class FakeTransport:
@@ -1682,18 +1736,19 @@ async def test_ssr_client_replaces_certification_and_course_previews_with_all_pa
             self,
             request: SduiComponentRequest,
         ) -> ComoFlightDocument:
-            section = (
-                "certifications"
+            sections = (
+                ("certifications",)
                 if request.component_id.endswith("Part1WithoutExp")
-                else "courses"
+                else ("courses", "honors")
             )
             return parse_flight_stream(
                 flight_stream(
                     [
-                        (
-                            '0:["$","a",null,{"url":'
+                        *(
+                            f'{index}:["$","a",null,{{"url":'
                             f'"/in/ada-lovelace/details/{section}/",'
                             f'"children":["Show all {section}"]}}]'
+                            for index, section in enumerate(sections)
                         )
                     ]
                 )
@@ -1730,7 +1785,7 @@ async def test_ssr_client_replaces_certification_and_course_previews_with_all_pa
                     f'2:["$","span",null,{{"children":["Certificate {start + 1}"]}}]',
                     '3:["$","span",null,{"children":["Authority"]}]',
                 ]
-            else:
+            elif section == "courses":
                 assert screen_id.endswith(".ProfileCourseDetails")
                 records = [
                     (
@@ -1740,6 +1795,18 @@ async def test_ssr_client_replaces_certification_and_course_previews_with_all_pa
                     ),
                     f'1:["$","span",null,{{"children":["Course {start + 1}"]}}]',
                     f'2:["$","span",null,{{"children":["CODE {start + 1}"]}}]',
+                ]
+            else:
+                assert section == "honors"
+                assert screen_id.endswith(".ProfileHonorDetails")
+                records = [
+                    (
+                        '0:["$","div",null,{"componentKey":'
+                        '"com.linkedin.sdui.profile.HonorDetails",'
+                        '"children":["$L1","$L2"]}]'
+                    ),
+                    f'1:["$","span",null,{{"children":["Honor {start + 1}"]}}]',
+                    '2:["$","span",null,{"children":["Issued by Society · Jun 1843"]}]',
                 ]
             return parse_flight_stream(flight_stream(records))
 
@@ -1760,8 +1827,10 @@ async def test_ssr_client_replaces_certification_and_course_previews_with_all_pa
         "Certificate 2",
     ]
     assert [item.name for item in profile.courses] == ["Course 1", "Course 2"]
+    assert [item.title for item in profile.honors] == ["Honor 1", "Honor 2"]
     assert ("ada-lovelace", "certifications") in transport.details_calls
     assert ("ada-lovelace", "courses") in transport.details_calls
+    assert ("ada-lovelace", "honors") in transport.details_calls
 
 
 @pytest.mark.asyncio

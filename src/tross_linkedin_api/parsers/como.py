@@ -12,6 +12,7 @@ from tross_linkedin_api.schemas.profile import (
     Course,
     DateParts,
     Education,
+    Honor,
     Language,
     LinkedInProfile,
     Position,
@@ -36,6 +37,7 @@ SKILLS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.skills"
 EDUCATION_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.education"
 CERTIFICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.certifications"
 COURSES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.courses"
+HONORS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.honors"
 PUBLICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.publications"
 RECOMMENDATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.recommendations"
 TEST_SCORES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.testscores"
@@ -51,6 +53,7 @@ PROFILE_DETAILS_SECTIONS = frozenset(
         "courses",
         "education",
         "experience",
+        "honors",
         "projects",
         "publications",
         "recommendations",
@@ -348,6 +351,14 @@ def extract_courses_pagination_request(
     """Return the Courses pager embedded in its details response."""
 
     return _extract_pagination_request(document, COURSES_PAGER_ID)
+
+
+def extract_honors_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Honors & awards pager embedded in its details response."""
+
+    return _extract_pagination_request(document, HONORS_PAGER_ID)
 
 
 def extract_publications_pagination_request(
@@ -701,6 +712,86 @@ def extract_publications_from_flight(
                 ):
                     publications[existing_index] = item
     return publications
+
+
+def extract_honors_from_flight(document: ComoFlightDocument) -> list[Honor]:
+    """Normalize Honors & awards rows from preview or paginated SDUI content."""
+
+    honors: list[Honor] = []
+    indexes: dict[tuple[str, str], int] = {}
+    metadata_pattern = re.compile(
+        r"^Issued by (?P<issuer>.+?)(?: · (?P<date>.+))?$"
+    )
+    for root in document.records.values():
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            texts = _clean_component_text(candidate, document)
+            metadata_entries = [
+                (index, match)
+                for index, text in enumerate(texts)
+                if (match := metadata_pattern.fullmatch(text)) is not None
+            ]
+            if len(metadata_entries) != 1:
+                continue
+            metadata_index, match = metadata_entries[0]
+            if metadata_index == 0:
+                continue
+            associated_with = next(
+                (
+                    text.removeprefix("Associated with ").strip()
+                    for text in texts[metadata_index + 1 :]
+                    if text.startswith("Associated with ")
+                ),
+                None,
+            )
+            description_parts = [
+                text
+                for text in texts[metadata_index + 1 :]
+                if not text.startswith(("Associated with ", "Link: "))
+                and not re.search(r"\.(?:jpe?g|png|gif|webp)$", text, re.IGNORECASE)
+            ]
+            resolved_candidate = _resolve_references(candidate, document)
+            displayed_url = next(
+                (
+                    text.removeprefix("Link: ").strip()
+                    for text in texts[metadata_index + 1 :]
+                    if text.startswith("Link: ")
+                    and urlsplit(text.removeprefix("Link: ").strip()).scheme
+                    in {"http", "https"}
+                ),
+                None,
+            )
+            item = Honor(
+                title=texts[0],
+                issuer=match.group("issuer").strip(),
+                issued_on=match.group("date"),
+                associated_with=associated_with,
+                description="\n".join(description_parts) or None,
+                url=_find_external_url(resolved_candidate) or displayed_url,
+            )
+            identity = (item.title, item.issued_on or "")
+            existing_index = indexes.get(identity)
+            if existing_index is None:
+                indexes[identity] = len(honors)
+                honors.append(item)
+                continue
+            existing = honors[existing_index]
+            existing_richness = sum(
+                value is not None
+                for value in (
+                    existing.associated_with,
+                    existing.description,
+                    existing.url,
+                )
+            )
+            item_richness = sum(
+                value is not None
+                for value in (item.associated_with, item.description, item.url)
+            )
+            if item_richness > existing_richness:
+                honors[existing_index] = item
+    return honors
 
 
 def extract_recommendations_from_flight(

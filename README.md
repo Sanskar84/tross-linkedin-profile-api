@@ -152,7 +152,7 @@ Supported component suffixes are:
 | `profileCardsExperienceOnly` | `experiences` plus complete Experience detail discovery |
 | `profileCardsBelowActivityPart1WithoutExp` | `education`, `certifications`, `projects` |
 | `profileCardsBelowActivityPart2` | `recommendations` (`received` and `given`) |
-| `profileCardsBelowActivityPart3` | `courses`, `publications`, `test_scores` |
+| `profileCardsBelowActivityPart3` | `courses`, `publications`, `test_scores`, `honors` |
 | `profileCardsBelowActivityPart4` | `languages` |
 | `profileCardsBelowActivityPart7` | `skills` |
 
@@ -189,6 +189,11 @@ card even though the corresponding details page contains data:
   Some pagers omit an explicit next descriptor; after a full page the service
   advances the embedded `start` by its embedded `count`, stopping on a
   short/empty page with the same duplicate-cursor and 20-page bounds.
+- Honors & awards: the Part 3 preview is parsed directly. When LinkedIn exposes
+  `/details/honors/`, the service follows its embedded
+  `profile.details.honors` pager to return the complete list. Each item keeps
+  its title, issuer, displayed issue date, associated organization,
+  description, and an external link when one is present.
 - Recommendations: Part 2 triggers a direct GET of
   `/in/<vanity>/details/recommendations/`. The service separately forwards the
   embedded `Received` and `Given` pagers and returns each entry with its type,
@@ -321,6 +326,7 @@ The response contains a `profile` object with this stable shape:
     "recommendations": [],
     "certifications": [],
     "courses": [],
+    "honors": [],
     "languages": [],
     "has_profile_photo_frame": false,
     "profile_images": []
