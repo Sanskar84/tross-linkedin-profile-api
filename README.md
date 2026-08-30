@@ -46,6 +46,10 @@ GET /in/<vanity>/                         (SSR HTML)
                          |    GET /in/<vanity>/details/experience/
                          |    and normalize its complete embedded list
                          |
+                         +--> when Education is missing or empty in preview cards
+                         |    GET /in/<vanity>/details/education/
+                         |    and normalize its embedded rows
+                         |
                          +--> when Projects exposes "Show all projects"
                          |    GET /in/<vanity>/details/projects/
                          |    POST /flagship-web/rsc-action/actions/pagination
@@ -144,12 +148,16 @@ Supported component suffixes are:
 Unknown descriptors are ignored so unrelated LinkedIn UI requests can change
 without changing the public response.
 
-Several regular profile cards are previews:
+Several regular profile cards are previews, and some profiles omit a preview
+card even though the corresponding details page contains data:
 
 - Experience: a validated `/in/<vanity>/details/experience/` link triggers a
   direct GET of the server-rendered detail page. LinkedIn currently embeds the
   complete Experience list in that page for tested profiles, so it is parsed
   without guessing an additional request.
+- Education: when the lower-profile preview component is absent or returns no
+  education rows, the service directly GETs
+  `/in/<vanity>/details/education/` and parses the embedded education cards.
 - Projects: a validated `/in/<vanity>/details/projects/` link triggers a direct
   GET. The service forwards the embedded
   `com.linkedin.sdui.pagers.profile.details.projects` request to LinkedIn's SDUI
@@ -160,6 +168,8 @@ Several regular profile cards are previews:
   The service selects the embedded
   `com.linkedin.sdui.pagers.profile.details.skills` request whose filter is
   `ProfileSkillCategory_ALL`, then forwards it to the same pagination action.
+  The same details-page flow is used as a fallback when the main profile omits
+  the Skills preview card entirely.
 
 Every pagination response is parsed with the same React Flight parser.
 Embedded next-page requests are followed with duplicate-cursor detection and a
@@ -408,7 +418,9 @@ it does not launch a browser or require network access. Coverage includes:
 - Experience and Projects details-page discovery, Projects SDUI pagination,
   normalized divided rows, and optional project metadata.
 - Skills SDUI pagination request forwarding, multi-page aggregation, duplicate
-  suppression, and bounded-loop protection.
+  suppression, bounded-loop protection, and missing-preview fallback.
+- Direct Education details-page fallback when the main profile omits or empties
+  the Education preview component.
 - Malformed/opaque Flight records and request descriptor extraction.
 - Top-card location extraction, including nested contact links.
 - Standalone and grouped experience cards with month-specific or year-only dates.

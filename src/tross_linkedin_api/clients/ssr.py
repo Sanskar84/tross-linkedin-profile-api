@@ -26,6 +26,7 @@ from tross_linkedin_api.parsers.como import (
     parse_como_flight,
 )
 from tross_linkedin_api.schemas.profile import (
+    Education,
     LinkedInProfile,
     Position,
     ProfileRequest,
@@ -165,7 +166,35 @@ class SsrLinkedInProfileClient:
                     )
                 else:
                     updates["skills"] = preview_skills
+        if self._details_transport is not None and not updates.get("education"):
+            updates["education"] = await self._fetch_all_education(
+                request.public_identifier
+            )
+        if (
+            self._details_transport is not None
+            and self._pagination_transport is not None
+            and not updates.get("skills")
+        ):
+            updates["skills"] = await self._fetch_all_skills(
+                request.public_identifier,
+                [],
+            )
         return profile.model_copy(update=updates)
+
+    async def _fetch_all_education(
+        self,
+        public_identifier: str,
+    ) -> list[Education]:
+        assert self._details_transport is not None
+        details_page = await self._details_transport.fetch_profile_details_page(
+            public_identifier,
+            "education",
+        )
+        try:
+            details_document = parse_como_flight(details_page.html)
+        except ComoFlightParseError as error:
+            raise LinkedInInvalidResponseError from error
+        return extract_education_from_flight(details_document)
 
     async def _fetch_all_experiences(
         self,
@@ -239,7 +268,7 @@ class SsrLinkedInProfileClient:
             raise LinkedInInvalidResponseError from error
         pagination_request = extract_skills_pagination_request(details_document)
         if pagination_request is None:
-            return preview_skills
+            return extract_skills_from_flight(details_document) or preview_skills
 
         skills: list[str] = []
         seen_requests: set[str] = set()

@@ -30,7 +30,9 @@ PAGINATION_REQUEST_TYPE = "proto.sdui.actions.requests.PaginationRequest"
 SKILLS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.skills"
 PROJECTS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.projects"
 SKILLS_ALL_FILTER = "ProfileSkillCategory_ALL"
-PROFILE_DETAILS_SECTIONS = frozenset({"experience", "projects", "skills"})
+PROFILE_DETAILS_SECTIONS = frozenset(
+    {"education", "experience", "projects", "skills"}
+)
 EXPERIENCE_DATE_PATTERN = re.compile(
     r"^(?:(?P<start_month>[A-Z][a-z]{2}) )?(?P<start_year>\d{4}) [–-] "
     r"(?:(?:(?P<end_month>[A-Z][a-z]{2}) )?(?P<end_year>\d{4})|Present)"

@@ -1136,8 +1136,134 @@ async def test_ssr_client_replaces_skill_preview_with_all_paginated_skills() -> 
     )
 
     assert profile.skills == ["Python", "Pydantic"]
-    assert transport.details_calls == [("ada-lovelace", "skills")]
+    assert transport.details_calls == [
+        ("ada-lovelace", "skills"),
+        ("ada-lovelace", "education"),
+    ]
     assert pagination_transport.starts == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_ssr_client_falls_back_to_detail_pages_when_preview_cards_are_missing() -> None:
+    profile_html = hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Hari","familyName":"Chintaparthi"}}}]'
+            ),
+        ]
+    )
+    education_html = hydration_html(
+        [
+            (
+                '0:["$","button",null,{"url":'
+                '"https://www.linkedin.com/school/123/",'
+                '"children":["$L1","$L2","$L3"]}]'
+            ),
+            (
+                '1:["$","span",null,{"children":'
+                '["Annamacharya Institute Of Technology And Sciences Kadapa"]}]'
+            ),
+            (
+                '2:["$","span",null,{"children":'
+                '["Bachelor of Technology - BTech, Computer Science"]}]'
+            ),
+            '3:["$","span",null,{"children":["Aug 2019 – May 2023"]}]',
+        ]
+    )
+    skills_request = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": "com.linkedin.sdui.pagers.profile.details.skills",
+        "requestedArguments": {
+            "payload": {
+                "vanityName": "hari-chintaparthi",
+                "profileId": "member-id",
+                "start": 0,
+                "count": 20,
+                "filter": "ProfileSkillCategory_ALL",
+            }
+        },
+    }
+    skills_html = hydration_html([f"0:{json.dumps(skills_request)}"])
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.details_calls: list[tuple[str, str]] = []
+
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(profile_html, "text/html", len(profile_html))
+
+        async def fetch_profile_details_page(
+            self,
+            public_identifier: str,
+            section: str,
+        ) -> ProfilePageDocument:
+            self.details_calls.append((public_identifier, section))
+            html = education_html if section == "education" else skills_html
+            return ProfilePageDocument(html, "text/html", len(html))
+
+    class FakeComponentTransport:
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            raise AssertionError(f"Unexpected component request: {request.component_id}")
+
+    class FakePaginationTransport:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_page(
+            self,
+            request: SduiPaginationRequest,
+            screen_id: str,
+        ) -> ComoFlightDocument:
+            assert request.pager_id.endswith(".skills")
+            assert screen_id.endswith(".ProfileSkillDetails")
+            self.calls += 1
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        (
+                            '0:["$","div",null,{"componentKey":'
+                            '"com.linkedin.sdui.profile.skill(member, 1)",'
+                            '"children":["$L1"]}]'
+                        ),
+                        '1:["$","span",null,{"children":["Data Science"]}]',
+                    ]
+                )
+            )
+
+    transport = FakeTransport()
+    pagination_transport = FakePaginationTransport()
+    client = SsrLinkedInProfileClient(
+        transport,
+        FakeComponentTransport(),
+        transport,
+        pagination_transport,
+    )
+
+    profile = await client.fetch_profile(
+        ProfileRequest(
+            profile_url="https://www.linkedin.com/in/hari-chintaparthi/"
+        )
+    )
+
+    assert [item.school_name for item in profile.education] == [
+        "Annamacharya Institute Of Technology And Sciences Kadapa"
+    ]
+    assert profile.skills == ["Data Science"]
+    assert transport.details_calls == [
+        ("hari-chintaparthi", "education"),
+        ("hari-chintaparthi", "skills"),
+    ]
+    assert pagination_transport.calls == 1
 
 
 @pytest.mark.asyncio
@@ -1266,4 +1392,6 @@ async def test_ssr_client_loads_experience_details_and_paginated_projects() -> N
     assert transport.details_calls == [
         ("ada-lovelace", "experience"),
         ("ada-lovelace", "projects"),
+        ("ada-lovelace", "education"),
+        ("ada-lovelace", "skills"),
     ]

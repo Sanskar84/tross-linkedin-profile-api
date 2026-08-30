@@ -160,7 +160,10 @@ async def test_profile_page_uses_direct_authenticated_ssr_request() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("section", ["experience", "projects", "skills"])
+@pytest.mark.parametrize(
+    "section",
+    ["education", "experience", "projects", "skills"],
+)
 async def test_profile_details_page_uses_validated_direct_request(section: str) -> None:
     html = '<script>window.__como_rehydration__ = ["0:{}\\n"];</script>'
     session = FakeSession(
