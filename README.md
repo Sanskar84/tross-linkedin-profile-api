@@ -222,6 +222,12 @@ Values are loaded through `pydantic-settings`. Secrets remain wrapped as
 
 ## API
 
+Live base URL:
+`https://tross-linkedin-profile-api-production-35c4.up.railway.app`
+
+Interactive OpenAPI documentation:
+`https://tross-linkedin-profile-api-production-35c4.up.railway.app/docs`
+
 ### Health check
 
 ```http
