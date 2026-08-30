@@ -10,6 +10,42 @@ runtimes are not used by the service.
 > Automated collection can trigger account restrictions and may violate
 > LinkedIn's terms. Use only credentials and data you are authorized to access.
 
+## Evaluator quick start
+
+The hosted API already has a server-side LinkedIn session configured. An
+evaluator does **not** need to obtain or submit a LinkedIn cookie for the normal
+assignment flow.
+
+- API documentation: <https://tross-linkedin-profile-api-production-35c4.up.railway.app/docs>
+- Health check: <https://tross-linkedin-profile-api-production-35c4.up.railway.app/health>
+- Profile endpoint: `POST /v1/linkedin/profile`
+- Public source repository:
+  <https://github.com/Sanskar84/tross-linkedin-profile-api>
+
+Example request against the hosted deployment:
+
+```bash
+curl --fail-with-body --max-time 120 \
+  -X POST \
+  'https://tross-linkedin-profile-api-production-35c4.up.railway.app/v1/linkedin/profile' \
+  -H 'content-type: application/json' \
+  -d '{"profile_url":"https://www.linkedin.com/in/example/"}'
+```
+
+Replace `example` with the public identifier of a real LinkedIn profile. A
+profile request can take several seconds because the service discovers and
+fetches multiple LinkedIn sections before returning one normalized response.
+
+### What to submit for the hiring challenge
+
+The challenge asks for more than only an API URL. Submit both of these:
+
+1. The public HTTPS API or its Swagger documentation URL.
+2. The public GitHub repository containing the complete source and README.
+
+Do not submit `.env`, `li_at`, screenshots containing cookies, or any other
+credential. The hosted fallback cookie belongs in Railway Variables only.
+
 ## Current approach
 
 LinkedIn's current profile page uses server-rendered RSC/SDUI data. The service
@@ -41,7 +77,7 @@ GET /in/<vanity>/                         (SSR HTML)
              +--> POST /flagship-web/rsc-action/actions/component
                   for About, experience, education/certifications/projects,
                   recommendations, courses/publications/test scores, languages,
-                  and skills
+                  honors, and skills
                          |
                          +--> when Experience exposes "Show all experiences"
                          |    GET /in/<vanity>/details/experience/
@@ -393,6 +429,42 @@ component responses.
 
 ## Authentication and session lifecycle
 
+### How to obtain `li_at` for your own deployment
+
+`li_at` is LinkedIn's authenticated session cookie. It is needed only when you
+run or deploy your own copy, or when you intentionally use the optional
+per-request `Authorization` override. The browser is used manually to provision
+the cookie; the running scraper itself remains browserless.
+
+Chrome or Microsoft Edge:
+
+1. Sign in to <https://www.linkedin.com/> using an account you are authorized
+   to use.
+2. Open Developer Tools (`F12`, or `Cmd+Option+I` on macOS).
+3. Open **Application** → **Storage** → **Cookies** →
+   `https://www.linkedin.com`.
+4. Find the cookie named `li_at` and copy only its **Value**.
+
+Firefox uses the equivalent **Storage** → **Cookies** panel. Safari first
+requires **Safari Settings** → **Advanced** → **Show features for web
+developers**, followed by **Develop** → **Show Web Inspector** → **Storage** →
+**Cookies**.
+
+Put the value in local `.env`:
+
+```dotenv
+LINKEDIN_LI_AT=replace_with_the_cookie_value
+```
+
+For Railway, open the service's **Variables** page and create the same
+`LINKEDIN_LI_AT` variable, then redeploy. Do not add the value to source code,
+`.env.example`, README examples, GitHub secrets visible in logs, screenshots,
+or API documentation.
+
+Treat `li_at` like a password: anyone who obtains it may be able to act as that
+LinkedIn session. Sign out of LinkedIn to revoke the session if the cookie is
+exposed.
+
 Copy `.env.example` to `.env` and add the `li_at` value from your own authorized
 LinkedIn session to enable the backend fallback. Never commit `.env` or paste
 session cookies into issues, chat, logs, or deployment output. A public
@@ -415,6 +487,14 @@ perform login, CAPTCHA solving, browser telemetry, or automatic cookie refresh.
 The session is closed after one profile request and is not persisted. A simple
 GET cannot refresh an expired `li_at`; refresh the authorized session manually
 when LinkedIn requires verification.
+
+You know the cookie needs replacement when a profile request returns a
+`LINKEDIN_SESSION_CHALLENGED` error, normally after LinkedIn responds with
+`401`, `403`, or a redirect to `/checkpoint/`. The `/health` endpoint only
+confirms that the FastAPI process is running; it does not validate the LinkedIn
+session. To refresh the cookie, sign in to LinkedIn, complete any verification,
+repeat the steps above, update `LINKEDIN_LI_AT`, and redeploy. Cookie lifetime is
+controlled by LinkedIn, so there is no reliable fixed refresh schedule.
 
 ## Redirects, rate limits, and errors
 
@@ -526,6 +606,29 @@ tests/                        # unit, contract, and transport tests
 ```
 
 ## Limitations
+
+### Profile-section coverage audit
+
+A direct component inventory across five representative profiles confirmed the
+following current coverage:
+
+| Section family | Status |
+| --- | --- |
+| Identity, headline, location, About, profile images | Supported |
+| Experience, education, skills, certifications, languages | Supported; these are the fields explicitly listed by the assignment |
+| Projects, recommendations, publications, test scores, courses | Supported, including detail-page pagination where LinkedIn exposes it |
+| Honors & awards | Supported, including the complete details pager |
+| Volunteer experience, patents, organizations | Detected as stable semantic component families, but no populated row was available in the audited sample; not yet normalized |
+| Interests | Detected in Part 5, but its tabbed entity feed is not currently part of the public response |
+| Causes | Detected in Part 6 on populated profiles, but not currently part of the public response |
+| Email and phone | Intentionally omitted; not exposed consistently by the tested profile payloads and no third-party enrichment is used |
+| Open to Work / Hiring | Only `has_profile_photo_frame` is authoritative; frame type is not guessed |
+
+This audit means the assignment's explicitly requested profile fields are
+covered. It does not mean every possible LinkedIn module is normalized: private
+profile UI contracts vary by account, locale, relationship, and LinkedIn
+release. Newly observed section families should be added only after a populated
+payload provides a testable row contract.
 
 - LinkedIn can rename component identifiers, change payloads, or remove fields
   without notice because these are private contracts.
