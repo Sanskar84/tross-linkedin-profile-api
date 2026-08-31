@@ -442,14 +442,30 @@ run or deploy your own copy, or when you intentionally use the optional
 per-request `Authorization` override. The browser is used manually to provision
 the cookie; the running scraper itself remains browserless.
 
-Chrome or Microsoft Edge:
+#### Plain-language Chrome or Microsoft Edge instructions
 
-1. Sign in to <https://www.linkedin.com/> using an account you are authorized
-   to use.
-2. Open Developer Tools (`F12`, or `Cmd+Option+I` on macOS).
-3. Open **Application** → **Storage** → **Cookies** →
-   `https://www.linkedin.com`.
-4. Find the cookie named `li_at` and copy only its **Value**.
+No coding is required. Follow these steps exactly:
+
+1. Open Chrome or Edge and sign in to <https://www.linkedin.com/> with the
+   LinkedIn account you are authorized to use. Stay on the LinkedIn website.
+2. Right-click an empty area of the LinkedIn page and choose **Inspect**.
+   A developer panel opens, usually on the right side of the window.
+3. At the top of that panel, click **Application**. If **Application** is not
+   visible, click the `»` double-arrow and select **Application** from the list.
+4. In the left side of the Application panel, find the **Storage** section.
+   Expand **Cookies** by clicking the small arrow beside it.
+5. Click `https://www.linkedin.com` underneath **Cookies**. A table of cookie
+   names and values appears on the right.
+6. Use the table's filter box to search for `li_at`, or scroll until the
+   **Name** column contains `li_at`.
+7. Click the `li_at` row. Copy the long text shown in its **Value** column. Copy
+   only the value—not the word `li_at`, not the entire row, and not the quotation
+   marks if the browser displays any.
+8. Close the developer panel. Do not paste the copied value into chat, email,
+   screenshots, GitHub, or the public demo page.
+
+Keyboard alternative for step 2: press `F12` or `Ctrl+Shift+I` on Windows/Linux,
+or `Cmd+Option+I` on macOS.
 
 Firefox uses the equivalent **Storage** → **Cookies** panel. Safari first
 requires **Safari Settings** → **Advanced** → **Show features for web
@@ -462,10 +478,17 @@ Put the value in local `.env`:
 LINKEDIN_LI_AT=replace_with_the_cookie_value
 ```
 
-For Railway, open the service's **Variables** page and create the same
-`LINKEDIN_LI_AT` variable, then redeploy. Do not add the value to source code,
-`.env.example`, README examples, GitHub secrets visible in logs, screenshots,
-or API documentation.
+For Railway:
+
+1. Open the Railway project and select the API service.
+2. Open the **Variables** tab.
+3. Click **New Variable**.
+4. Enter `LINKEDIN_LI_AT` as the variable name.
+5. Paste the copied cookie value as the variable value.
+6. Save the variable and allow Railway to redeploy the service.
+
+Do not add the value to source code, `.env.example`, README examples, build
+logs, screenshots, or API documentation.
 
 Treat `li_at` like a password: anyone who obtains it may be able to act as that
 LinkedIn session. Sign out of LinkedIn to revoke the session if the cookie is
