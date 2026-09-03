@@ -201,6 +201,12 @@ Supported component suffixes are:
 Unknown descriptors are ignored so unrelated LinkedIn UI requests can change
 without changing the public response.
 
+Independent component and detail-section requests run concurrently behind one
+per-profile semaphore capped at three in-flight LinkedIn requests. This reduces
+end-to-end latency without sending an unbounded burst. Pages within any one
+section remain sequential because every next-page request depends on the cursor
+returned or derived from the preceding page.
+
 Several regular profile cards are previews, and some profiles omit a preview
 card even though the corresponding details page contains data:
 

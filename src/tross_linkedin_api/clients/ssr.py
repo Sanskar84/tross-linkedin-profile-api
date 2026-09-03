@@ -1,7 +1,9 @@
 """Profile client backed by LinkedIn's authenticated SSR response."""
 
+import asyncio
 import json
-from typing import Literal, Protocol
+from collections.abc import Coroutine
+from typing import Any, Literal, Protocol
 
 from tross_linkedin_api.clients.linkedin import ProfilePageDocument
 from tross_linkedin_api.errors import LinkedInInvalidResponseError
@@ -124,6 +126,7 @@ MAX_PROJECTS_PAGES = 20
 MAX_PUBLICATION_PAGES = 20
 MAX_RECOMMENDATION_PAGES = 20
 MAX_TEST_SCORE_PAGES = 20
+MAX_CONCURRENT_LINKEDIN_REQUESTS = 3
 
 
 class SsrLinkedInProfileClient:
@@ -140,6 +143,7 @@ class SsrLinkedInProfileClient:
         self._component_transport = component_transport
         self._details_transport = details_transport
         self._pagination_transport = pagination_transport
+        self._request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_LINKEDIN_REQUESTS)
 
     async def fetch_profile(self, request: ProfileRequest) -> LinkedInProfile:
         document = await self._transport.fetch_profile_page(request.public_identifier)
@@ -151,10 +155,10 @@ class SsrLinkedInProfileClient:
 
         if self._component_transport is None:
             return profile
-        updates: dict[str, object] = {}
-        for component_request in component_requests:
-            component_id = component_request.component_id
-            if not component_id.endswith(
+        supported_requests = [
+            component_request
+            for component_request in component_requests
+            if component_request.component_id.endswith(
                 (
                     "profileCardsAboveActivity",
                     "profileCardsExperienceOnly",
@@ -165,199 +169,25 @@ class SsrLinkedInProfileClient:
                     "profileCardsBelowActivityPart6",
                     "profileCardsBelowActivityPart7",
                 )
-            ):
-                continue
-            component = await self._component_transport.fetch_component(
-                component_request
             )
-            if component_id.endswith("profileCardsAboveActivity"):
-                updates["about"] = extract_about_from_flight(component)
-            elif component_id.endswith("profileCardsExperienceOnly"):
-                preview_experiences = extract_experiences_from_flight(component)
-                details_path = extract_profile_details_path(component, "experience")
-                if (
-                    details_path
-                    == f"/in/{request.public_identifier}/details/experience/"
-                    and self._details_transport is not None
-                ):
-                    updates["experiences"] = await self._fetch_all_experiences(
-                        request.public_identifier,
-                        preview_experiences,
-                    )
-                else:
-                    updates["experiences"] = preview_experiences
-            elif component_id.endswith("profileCardsBelowActivityPart1WithoutExp"):
-                updates["education"] = extract_education_from_flight(component)
-                preview_volunteering = extract_volunteer_experiences_from_flight(
-                    component
+        ]
+        async with asyncio.TaskGroup() as task_group:
+            component_tasks = [
+                task_group.create_task(
+                    self._fetch_component_updates(request, component_request)
                 )
-                volunteering_path = extract_profile_details_path(
-                    component,
-                    "volunteering-experiences",
-                )
-                if (
-                    volunteering_path
-                    == (
-                        f"/in/{request.public_identifier}/details/"
-                        "volunteering-experiences/"
-                    )
-                    and self._details_transport is not None
-                ):
-                    updates["volunteer_experiences"] = (
-                        await self._fetch_all_volunteer_experiences(
-                            request.public_identifier,
-                            preview_volunteering,
-                        )
-                    )
-                else:
-                    updates["volunteer_experiences"] = preview_volunteering
-                preview_certifications = extract_certifications_from_flight(component)
-                certifications_path = extract_profile_details_path(
-                    component,
-                    "certifications",
-                )
-                if (
-                    certifications_path
-                    == f"/in/{request.public_identifier}/details/certifications/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["certifications"] = await self._fetch_all_certifications(
-                        request.public_identifier,
-                        preview_certifications,
-                    )
-                else:
-                    updates["certifications"] = preview_certifications
-                preview_projects = extract_projects_from_flight(component)
-                projects_path = extract_profile_details_path(component, "projects")
-                if (
-                    projects_path
-                    == f"/in/{request.public_identifier}/details/projects/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["projects"] = await self._fetch_all_projects(
-                        request.public_identifier
-                    )
-                else:
-                    updates["projects"] = preview_projects
-            elif component_id.endswith("profileCardsBelowActivityPart2"):
-                if (
-                    has_recommendations_section(component)
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["recommendations"] = (
-                        await self._fetch_all_recommendations(
-                            request.public_identifier
-                        )
-                    )
-            elif component_id.endswith("profileCardsBelowActivityPart3"):
-                preview_honors = extract_honors_from_flight(component)
-                honors_path = extract_profile_details_path(component, "honors")
-                if (
-                    honors_path
-                    == f"/in/{request.public_identifier}/details/honors/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["honors"] = await self._fetch_all_honors(
-                        request.public_identifier,
-                        preview_honors,
-                    )
-                else:
-                    updates["honors"] = preview_honors
+                for component_request in supported_requests
+            ]
+        component_updates = [task.result() for task in component_tasks]
+        updates = {
+            key: value
+            for component_update in component_updates
+            for key, value in component_update.items()
+        }
 
-                preview_courses = extract_courses_from_flight(component)
-                courses_path = extract_profile_details_path(component, "courses")
-                if (
-                    courses_path
-                    == f"/in/{request.public_identifier}/details/courses/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["courses"] = await self._fetch_all_courses(
-                        request.public_identifier,
-                        preview_courses,
-                    )
-                else:
-                    updates["courses"] = preview_courses
-
-                preview_publications = extract_publications_from_flight(component)
-                publications_path = extract_profile_details_path(
-                    component,
-                    "publications",
-                )
-                if (
-                    publications_path
-                    == f"/in/{request.public_identifier}/details/publications/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["publications"] = await self._fetch_all_publications(
-                        request.public_identifier,
-                        preview_publications,
-                    )
-                else:
-                    updates["publications"] = preview_publications
-
-                preview_test_scores = extract_test_scores_from_flight(component)
-                test_scores_path = extract_profile_details_path(
-                    component,
-                    "test-scores",
-                )
-                if (
-                    test_scores_path
-                    == f"/in/{request.public_identifier}/details/test-scores/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["test_scores"] = await self._fetch_all_test_scores(
-                        request.public_identifier,
-                        preview_test_scores,
-                    )
-                else:
-                    updates["test_scores"] = preview_test_scores
-            elif component_id.endswith("profileCardsBelowActivityPart4"):
-                updates["languages"] = extract_languages_from_flight(component)
-                preview_organizations = extract_organizations_from_flight(component)
-                organizations_path = extract_profile_details_path(
-                    component,
-                    "organizations",
-                )
-                if (
-                    organizations_path
-                    == f"/in/{request.public_identifier}/details/organizations/"
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["organizations"] = await self._fetch_all_organizations(
-                        request.public_identifier,
-                        preview_organizations,
-                    )
-                else:
-                    updates["organizations"] = preview_organizations
-            elif component_id.endswith("profileCardsBelowActivityPart6"):
-                updates["causes"] = extract_causes_from_flight(component)
-            elif component_id.endswith("profileCardsBelowActivityPart7"):
-                preview_skills = extract_skills_from_flight(component)
-                details_path = extract_skills_details_path(component)
-                expected_path = (
-                    f"/in/{request.public_identifier}/details/skills/"
-                )
-                if (
-                    details_path == expected_path
-                    and self._details_transport is not None
-                    and self._pagination_transport is not None
-                ):
-                    updates["skills"] = await self._fetch_all_skills(
-                        request.public_identifier,
-                        preview_skills,
-                    )
-                else:
-                    updates["skills"] = preview_skills
+        fallback_fetches: dict[str, Coroutine[Any, Any, object]] = {}
         if self._details_transport is not None and not updates.get("education"):
-            updates["education"] = await self._fetch_all_education(
+            fallback_fetches["education"] = self._fetch_all_education(
                 request.public_identifier
             )
         if (
@@ -365,18 +195,249 @@ class SsrLinkedInProfileClient:
             and self._pagination_transport is not None
             and not updates.get("skills")
         ):
-            updates["skills"] = await self._fetch_all_skills(
+            fallback_fetches["skills"] = self._fetch_all_skills(
                 request.public_identifier,
                 [],
             )
+        updates.update(await _gather_named(fallback_fetches))
         return profile.model_copy(update=updates)
+
+    async def _fetch_component_updates(
+        self,
+        request: ProfileRequest,
+        component_request: SduiComponentRequest,
+    ) -> dict[str, object]:
+        component = await self._fetch_component(component_request)
+        component_id = component_request.component_id
+        if component_id.endswith("profileCardsAboveActivity"):
+            return {"about": extract_about_from_flight(component)}
+        if component_id.endswith("profileCardsExperienceOnly"):
+            preview_experiences = extract_experiences_from_flight(component)
+            details_path = extract_profile_details_path(component, "experience")
+            if (
+                details_path
+                == f"/in/{request.public_identifier}/details/experience/"
+                and self._details_transport is not None
+            ):
+                return {
+                    "experiences": await self._fetch_all_experiences(
+                        request.public_identifier,
+                        preview_experiences,
+                    )
+                }
+            return {"experiences": preview_experiences}
+        if component_id.endswith("profileCardsBelowActivityPart1WithoutExp"):
+            return await self._fetch_part_one_updates(request, component)
+        if component_id.endswith("profileCardsBelowActivityPart2"):
+            if (
+                has_recommendations_section(component)
+                and self._details_transport is not None
+                and self._pagination_transport is not None
+            ):
+                return {
+                    "recommendations": await self._fetch_all_recommendations(
+                        request.public_identifier
+                    )
+                }
+            return {}
+        if component_id.endswith("profileCardsBelowActivityPart3"):
+            return await self._fetch_part_three_updates(request, component)
+        if component_id.endswith("profileCardsBelowActivityPart4"):
+            updates: dict[str, object] = {
+                "languages": extract_languages_from_flight(component)
+            }
+            preview_organizations = extract_organizations_from_flight(component)
+            details_path = extract_profile_details_path(component, "organizations")
+            if (
+                details_path
+                == f"/in/{request.public_identifier}/details/organizations/"
+                and self._details_transport is not None
+                and self._pagination_transport is not None
+            ):
+                updates["organizations"] = await self._fetch_all_organizations(
+                    request.public_identifier,
+                    preview_organizations,
+                )
+            else:
+                updates["organizations"] = preview_organizations
+            return updates
+        if component_id.endswith("profileCardsBelowActivityPart6"):
+            return {"causes": extract_causes_from_flight(component)}
+        if component_id.endswith("profileCardsBelowActivityPart7"):
+            preview_skills = extract_skills_from_flight(component)
+            details_path = extract_skills_details_path(component)
+            if (
+                details_path
+                == f"/in/{request.public_identifier}/details/skills/"
+                and self._details_transport is not None
+                and self._pagination_transport is not None
+            ):
+                return {
+                    "skills": await self._fetch_all_skills(
+                        request.public_identifier,
+                        preview_skills,
+                    )
+                }
+            return {"skills": preview_skills}
+        return {}
+
+    async def _fetch_part_one_updates(
+        self,
+        request: ProfileRequest,
+        component: ComoFlightDocument,
+    ) -> dict[str, object]:
+        updates: dict[str, object] = {
+            "education": extract_education_from_flight(component)
+        }
+        detail_fetches: dict[str, Coroutine[Any, Any, object]] = {}
+
+        preview_volunteering = extract_volunteer_experiences_from_flight(component)
+        volunteering_path = extract_profile_details_path(
+            component,
+            "volunteering-experiences",
+        )
+        if (
+            volunteering_path
+            == (
+                f"/in/{request.public_identifier}/details/"
+                "volunteering-experiences/"
+            )
+            and self._details_transport is not None
+        ):
+            detail_fetches["volunteer_experiences"] = (
+                self._fetch_all_volunteer_experiences(
+                    request.public_identifier,
+                    preview_volunteering,
+                )
+            )
+        else:
+            updates["volunteer_experiences"] = preview_volunteering
+
+        preview_certifications = extract_certifications_from_flight(component)
+        certifications_path = extract_profile_details_path(component, "certifications")
+        if (
+            certifications_path
+            == f"/in/{request.public_identifier}/details/certifications/"
+            and self._details_transport is not None
+            and self._pagination_transport is not None
+        ):
+            detail_fetches["certifications"] = self._fetch_all_certifications(
+                request.public_identifier,
+                preview_certifications,
+            )
+        else:
+            updates["certifications"] = preview_certifications
+
+        preview_projects = extract_projects_from_flight(component)
+        projects_path = extract_profile_details_path(component, "projects")
+        if (
+            projects_path == f"/in/{request.public_identifier}/details/projects/"
+            and self._details_transport is not None
+            and self._pagination_transport is not None
+        ):
+            detail_fetches["projects"] = self._fetch_all_projects(
+                request.public_identifier
+            )
+        else:
+            updates["projects"] = preview_projects
+
+        updates.update(await _gather_named(detail_fetches))
+        return updates
+
+    async def _fetch_part_three_updates(
+        self,
+        request: ProfileRequest,
+        component: ComoFlightDocument,
+    ) -> dict[str, object]:
+        updates: dict[str, object] = {}
+        detail_fetches: dict[str, Coroutine[Any, Any, object]] = {}
+        can_fetch_details = (
+            self._details_transport is not None
+            and self._pagination_transport is not None
+        )
+
+        preview_honors = extract_honors_from_flight(component)
+        if can_fetch_details and extract_profile_details_path(
+            component, "honors"
+        ) == f"/in/{request.public_identifier}/details/honors/":
+            detail_fetches["honors"] = self._fetch_all_honors(
+                request.public_identifier,
+                preview_honors,
+            )
+        else:
+            updates["honors"] = preview_honors
+
+        preview_courses = extract_courses_from_flight(component)
+        if can_fetch_details and extract_profile_details_path(
+            component, "courses"
+        ) == f"/in/{request.public_identifier}/details/courses/":
+            detail_fetches["courses"] = self._fetch_all_courses(
+                request.public_identifier,
+                preview_courses,
+            )
+        else:
+            updates["courses"] = preview_courses
+
+        preview_publications = extract_publications_from_flight(component)
+        if can_fetch_details and extract_profile_details_path(
+            component, "publications"
+        ) == f"/in/{request.public_identifier}/details/publications/":
+            detail_fetches["publications"] = self._fetch_all_publications(
+                request.public_identifier,
+                preview_publications,
+            )
+        else:
+            updates["publications"] = preview_publications
+
+        preview_test_scores = extract_test_scores_from_flight(component)
+        if can_fetch_details and extract_profile_details_path(
+            component, "test-scores"
+        ) == f"/in/{request.public_identifier}/details/test-scores/":
+            detail_fetches["test_scores"] = self._fetch_all_test_scores(
+                request.public_identifier,
+                preview_test_scores,
+            )
+        else:
+            updates["test_scores"] = preview_test_scores
+
+        updates.update(await _gather_named(detail_fetches))
+        return updates
+
+    async def _fetch_component(
+        self,
+        request: SduiComponentRequest,
+    ) -> ComoFlightDocument:
+        assert self._component_transport is not None
+        async with self._request_semaphore:
+            return await self._component_transport.fetch_component(request)
+
+    async def _fetch_details_page(
+        self,
+        public_identifier: str,
+        section: str,
+    ) -> ProfilePageDocument:
+        assert self._details_transport is not None
+        async with self._request_semaphore:
+            return await self._details_transport.fetch_profile_details_page(
+                public_identifier,
+                section,
+            )
+
+    async def _fetch_pagination_page(
+        self,
+        request: SduiPaginationRequest,
+        screen_id: str,
+    ) -> ComoFlightDocument:
+        assert self._pagination_transport is not None
+        async with self._request_semaphore:
+            return await self._pagination_transport.fetch_page(request, screen_id)
 
     async def _fetch_all_education(
         self,
         public_identifier: str,
     ) -> list[Education]:
         assert self._details_transport is not None
-        details_page = await self._details_transport.fetch_profile_details_page(
+        details_page = await self._fetch_details_page(
             public_identifier,
             "education",
         )
@@ -396,7 +457,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 EDUCATION_SCREEN_ID,
             )
@@ -421,7 +482,7 @@ class SsrLinkedInProfileClient:
         preview_experiences: list[Position],
     ) -> list[Position]:
         assert self._details_transport is not None
-        details_page = await self._details_transport.fetch_profile_details_page(
+        details_page = await self._fetch_details_page(
             public_identifier,
             "experience",
         )
@@ -435,7 +496,7 @@ class SsrLinkedInProfileClient:
     async def _fetch_all_projects(self, public_identifier: str) -> list[Project]:
         assert self._details_transport is not None
         assert self._pagination_transport is not None
-        details_page = await self._details_transport.fetch_profile_details_page(
+        details_page = await self._fetch_details_page(
             public_identifier,
             "projects",
         )
@@ -455,7 +516,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 PROJECTS_SCREEN_ID,
             )
@@ -499,7 +560,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 CERTIFICATIONS_SCREEN_ID,
             )
@@ -540,7 +601,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 COURSES_SCREEN_ID,
             )
@@ -582,7 +643,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 PUBLICATIONS_SCREEN_ID,
             )
@@ -623,7 +684,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 HONORS_SCREEN_ID,
             )
@@ -678,7 +739,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 ORGANIZATIONS_SCREEN_ID,
             )
@@ -720,7 +781,7 @@ class SsrLinkedInProfileClient:
             if request_key in seen_requests:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 TEST_SCORES_SCREEN_ID,
             )
@@ -767,7 +828,7 @@ class SsrLinkedInProfileClient:
                 if request_key in seen_requests:
                     raise LinkedInInvalidResponseError
                 seen_requests.add(request_key)
-                page = await self._pagination_transport.fetch_page(
+                page = await self._fetch_pagination_page(
                     pagination_request,
                     RECOMMENDATIONS_SCREEN_ID,
                 )
@@ -805,7 +866,7 @@ class SsrLinkedInProfileClient:
         section: str,
     ) -> ComoFlightDocument:
         assert self._details_transport is not None
-        details_page = await self._details_transport.fetch_profile_details_page(
+        details_page = await self._fetch_details_page(
             public_identifier,
             section,
         )
@@ -822,7 +883,7 @@ class SsrLinkedInProfileClient:
         assert self._details_transport is not None
         assert self._pagination_transport is not None
 
-        details_page = await self._details_transport.fetch_profile_details_page(
+        details_page = await self._fetch_details_page(
             public_identifier,
             "skills",
         )
@@ -842,7 +903,7 @@ class SsrLinkedInProfileClient:
                 raise LinkedInInvalidResponseError
             seen_requests.add(request_key)
 
-            page = await self._pagination_transport.fetch_page(
+            page = await self._fetch_pagination_page(
                 pagination_request,
                 SKILLS_SCREEN_ID,
             )
@@ -862,6 +923,21 @@ class SsrLinkedInProfileClient:
             pagination_request = next_request
 
         raise LinkedInInvalidResponseError
+
+
+async def _gather_named(
+    fetches: dict[str, Coroutine[Any, Any, object]],
+) -> dict[str, object]:
+    """Await independent section fetches while preserving their output names."""
+
+    if not fetches:
+        return {}
+    async with asyncio.TaskGroup() as task_group:
+        tasks: dict[str, asyncio.Task[object]] = {
+            name: task_group.create_task(fetch)
+            for name, fetch in fetches.items()
+        }
+    return {name: task.result() for name, task in tasks.items()}
 
 
 def _pagination_request_key(request: SduiPaginationRequest) -> str:

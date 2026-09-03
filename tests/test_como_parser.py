@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -55,6 +56,31 @@ def hydration_html(records: list[str]) -> str:
 
 def flight_stream(records: list[str]) -> str:
     return "\n".join(records) + "\n"
+
+
+def profile_html_with_component_requests(component_ids: list[str]) -> str:
+    requests = [
+        {
+            "$type": "proto.sdui.actions.core.AsyncComponentRequest",
+            "newComponentId": component_id,
+            "requestedArguments": {},
+        }
+        for component_id in component_ids
+    ]
+    return hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Ada","familyName":"Lovelace"}},'
+                f'"requests":{json.dumps(requests)}}}]'
+            ),
+        ]
+    )
 
 
 def test_parse_como_flight_reassembles_chunks_and_references() -> None:
@@ -1476,6 +1502,141 @@ def test_extract_profile_detects_generic_profile_photo_frame() -> None:
 def test_parse_como_flight_rejects_invalid_documents(html: str) -> None:
     with pytest.raises(ComoFlightParseError):
         parse_como_flight(html)
+
+
+@pytest.mark.asyncio
+async def test_ssr_client_fetches_components_concurrently_with_limit_three() -> None:
+    component_ids = [
+        "com.linkedin.profileCardsAboveActivity",
+        "com.linkedin.profileCardsExperienceOnly",
+        "com.linkedin.profileCardsBelowActivityPart2",
+        "com.linkedin.profileCardsBelowActivityPart6",
+    ]
+    html = profile_html_with_component_requests(component_ids)
+
+    class FakeTransport:
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(html, "text/html", len(html))
+
+    class ConcurrentComponentTransport:
+        def __init__(self) -> None:
+            self.active = 0
+            self.maximum_active = 0
+            self.started = 0
+            self.first_batch_started = asyncio.Event()
+
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            del request
+            self.active += 1
+            self.started += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+            if self.started == 3:
+                self.first_batch_started.set()
+            await self.first_batch_started.wait()
+            self.active -= 1
+            return parse_flight_stream('0:["$","div",null,{}]\n')
+
+    component_transport = ConcurrentComponentTransport()
+    await asyncio.wait_for(
+        SsrLinkedInProfileClient(
+            FakeTransport(),
+            component_transport,
+        ).fetch_profile(
+            ProfileRequest(profile_url="https://www.linkedin.com/in/ada-lovelace/")
+        ),
+        timeout=1,
+    )
+
+    assert component_transport.maximum_active == 3
+
+
+@pytest.mark.asyncio
+async def test_ssr_client_fetches_independent_part_one_details_concurrently() -> None:
+    component_id = "com.linkedin.profileCardsBelowActivityPart1WithoutExp"
+    html = profile_html_with_component_requests([component_id])
+
+    class ConcurrentTransport:
+        def __init__(self) -> None:
+            self.active_details = 0
+            self.maximum_active_details = 0
+            self.started_sections: set[str] = set()
+            self.detail_batch_started = asyncio.Event()
+
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(html, "text/html", len(html))
+
+        async def fetch_profile_details_page(
+            self,
+            public_identifier: str,
+            section: str,
+        ) -> ProfilePageDocument:
+            del public_identifier
+            self.active_details += 1
+            self.maximum_active_details = max(
+                self.maximum_active_details,
+                self.active_details,
+            )
+            self.started_sections.add(section)
+            if {
+                "volunteering-experiences",
+                "certifications",
+                "projects",
+            }.issubset(self.started_sections):
+                self.detail_batch_started.set()
+            await self.detail_batch_started.wait()
+            self.active_details -= 1
+            detail_html = hydration_html(['0:["$","div",null,{}]'])
+            return ProfilePageDocument(detail_html, "text/html", len(detail_html))
+
+    class FakeComponentTransport:
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            del request
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        (
+                            '0:["$","div",null,{"children":['
+                            '["$","a",null,{"url":'
+                            '"/in/ada-lovelace/details/volunteering-experiences/"}],'
+                            '["$","a",null,{"url":'
+                            '"/in/ada-lovelace/details/certifications/"}],'
+                            '["$","a",null,{"url":'
+                            '"/in/ada-lovelace/details/projects/"}]]}]'
+                        )
+                    ]
+                )
+            )
+
+    class UnusedPaginationTransport:
+        async def fetch_page(
+            self,
+            request: SduiPaginationRequest,
+            screen_id: str,
+        ) -> ComoFlightDocument:
+            raise AssertionError((request, screen_id))
+
+    transport = ConcurrentTransport()
+    await asyncio.wait_for(
+        SsrLinkedInProfileClient(
+            transport,
+            FakeComponentTransport(),
+            transport,
+            UnusedPaginationTransport(),
+        ).fetch_profile(
+            ProfileRequest(profile_url="https://www.linkedin.com/in/ada-lovelace/")
+        ),
+        timeout=1,
+    )
+
+    assert transport.maximum_active_details == 3
 
 
 @pytest.mark.asyncio
