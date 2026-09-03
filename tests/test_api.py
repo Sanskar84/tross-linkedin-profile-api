@@ -37,6 +37,12 @@ def test_homepage_exposes_accessible_profile_demo() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert '<label for="profile-url">LinkedIn profile URL</label>' in response.text
+    assert '<label for="linkedin-cookie">li_at cookie value</label>' in response.text
+    assert 'id="linkedin-cookie"' in response.text
+    assert 'type="password"' in response.text
+    assert 'autocomplete="off"' in response.text
+    assert 'headers.Authorization = `Bearer ${liAt}`' in response.text
+    assert 'cookieInput.value = ""' in response.text
     assert 'action="/v1/linkedin/profile"' in response.text
     assert 'aria-live="polite"' in response.text
     assert 'href="/docs"' in response.text

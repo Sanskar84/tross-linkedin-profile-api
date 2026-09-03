@@ -336,9 +336,12 @@ Live base URL:
 `https://tross-linkedin-profile-api-production-35c4.up.railway.app`
 
 Opening the base URL displays a lightweight demo form that submits a LinkedIn
-profile URL to the same public JSON endpoint and renders the response. It uses
-no frontend framework, browser automation, or additional backend route for data
-retrieval.
+profile URL to the same public JSON endpoint and renders the response. Its
+expandable advanced section accepts an optional caller-owned `li_at` value and
+sends it as the existing `Authorization: Bearer` header. The password field is
+cleared immediately after submission; the value is not placed in the URL,
+response, browser storage, or application configuration. It uses no frontend
+framework, browser automation, or additional backend route for data retrieval.
 
 Interactive OpenAPI documentation:
 `https://tross-linkedin-profile-api-production-35c4.up.railway.app/docs`
@@ -480,7 +483,9 @@ No coding is required. Follow these steps exactly:
    only the value—not the word `li_at`, not the entire row, and not the quotation
    marks if the browser displays any.
 8. Close the developer panel. Do not paste the copied value into chat, email,
-   screenshots, GitHub, or the public demo page.
+   screenshots, or GitHub. You may paste it into the optional cookie field on
+   this project's demo page only when you trust the HTTPS deployment receiving
+   the request; using your own local deployment is safest.
 
 Keyboard alternative for step 2: press `F12` or `Ctrl+Shift+I` on Windows/Linux,
 or `Cmd+Option+I` on macOS.
@@ -519,6 +524,10 @@ assignment deployment should configure this fallback so evaluators can call the
 documented API using only a profile URL.
 
 Alternatively, an authorized caller may provide `Authorization: Bearer <li_at>`.
+On the demo homepage, expand **Use your own LinkedIn session cookie**, paste
+only the cookie's value, and submit the profile URL. The frontend converts it to
+that same header and clears the input immediately. It does not persist the value
+in cookies, local storage, session storage, or the rendered API response.
 The value is validated as a bounded, whitespace-free header token, wrapped in
 `SecretStr`, placed into a newly created in-memory `curl_cffi` session, and never
 written to configuration or persistent storage. The session and its cookie jar

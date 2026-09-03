@@ -34,7 +34,8 @@ HOMEPAGE_HTML = """<!doctype html>
     }
     a { color: var(--accent-dark); text-underline-offset: 0.2em; }
     a:hover { text-decoration-thickness: 0.14em; }
-    a:focus-visible, button:focus-visible, input:focus-visible, pre:focus-visible {
+    a:focus-visible, button:focus-visible, input:focus-visible,
+    summary:focus-visible, pre:focus-visible {
       outline: 3px solid #1967d2;
       outline-offset: 3px;
     }
@@ -87,6 +88,20 @@ HOMEPAGE_HTML = """<!doctype html>
     label { display: block; margin-bottom: 9px; font-weight: 750; }
     .hint { margin: 0 0 16px; color: var(--muted); font-size: 0.92rem; }
     .controls { display: grid; grid-template-columns: 1fr auto; gap: 12px; }
+    details.credential {
+      margin-top: 18px;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+    }
+    details.credential summary {
+      width: fit-content;
+      color: var(--accent-dark);
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .credential-fields { margin-top: 16px; }
+    .credential-fields .hint { margin-bottom: 10px; }
+    .security-note { margin-top: 10px; }
     input, button { min-height: 50px; border-radius: 10px; font: inherit; }
     input {
       width: 100%;
@@ -185,6 +200,31 @@ HOMEPAGE_HTML = """<!doctype html>
           >
           <button id="submit-button" type="submit">Retrieve profile</button>
         </div>
+        <details class="credential">
+          <summary>Use your own LinkedIn session cookie (optional)</summary>
+          <div class="credential-fields">
+            <label for="linkedin-cookie">li_at cookie value</label>
+            <p class="hint" id="cookie-hint">
+              Paste only the value of your <code>li_at</code> cookie. If left
+              blank, the API uses its configured server session.
+            </p>
+            <input
+              id="linkedin-cookie"
+              name="linkedin_cookie"
+              type="password"
+              autocomplete="off"
+              autocapitalize="none"
+              spellcheck="false"
+              aria-describedby="cookie-hint cookie-security"
+              placeholder="AQED…"
+            >
+            <p class="hint security-note" id="cookie-security">
+              Sent to this API only for the current request and cleared from
+              this form immediately. It is not saved by this application.
+              Treat it like a password and use it only on a deployment you trust.
+            </p>
+          </div>
+        </details>
       </form>
       <p id="status" class="status" role="status" aria-live="polite"></p>
       <section id="result" class="result" aria-labelledby="result-title" hidden>
@@ -213,6 +253,7 @@ HOMEPAGE_HTML = """<!doctype html>
   <script>
     const form = document.getElementById("profile-form");
     const input = document.getElementById("profile-url");
+    const cookieInput = document.getElementById("linkedin-cookie");
     const button = document.getElementById("submit-button");
     const status = document.getElementById("status");
     const result = document.getElementById("result");
@@ -229,9 +270,13 @@ HOMEPAGE_HTML = """<!doctype html>
       result.hidden = true;
 
       try {
+        const headers = { "content-type": "application/json" };
+        const liAt = cookieInput.value.trim();
+        cookieInput.value = "";
+        if (liAt) headers.Authorization = `Bearer ${liAt}`;
         const response = await fetch(form.action, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers,
           body: JSON.stringify({ profile_url: input.value.trim() }),
         });
         const payload = await response.json();
