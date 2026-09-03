@@ -78,7 +78,7 @@ GET /in/<vanity>/                         (SSR HTML)
              +--> POST /flagship-web/rsc-action/actions/component
                   for About, experience, education/certifications/projects,
                   recommendations, courses/publications/test scores, languages,
-                  honors, and skills
+                  honors, volunteering, organizations, causes, and skills
                          |
                          +--> when Experience exposes "Show all experiences"
                          |    GET /in/<vanity>/details/experience/
@@ -100,6 +100,10 @@ GET /in/<vanity>/                         (SSR HTML)
                          +--> GET recommendation/publication/test-score details
                          |    and POST their embedded Received/Given or list pagers
                          |    when the corresponding profile cards are present
+                         |
+                         +--> GET Volunteer experience and Organization details
+                         |    pages when their validated links are present;
+                         |    paginate Organizations when LinkedIn supplies a pager
                          |
                          +--> when Skills exposes "Show all skills"
                               GET /in/<vanity>/details/skills/
@@ -187,10 +191,11 @@ Supported component suffixes are:
 | --- | --- |
 | `profileCardsAboveActivity` | `about` |
 | `profileCardsExperienceOnly` | `experiences` plus complete Experience detail discovery |
-| `profileCardsBelowActivityPart1WithoutExp` | `education`, `certifications`, `projects` |
+| `profileCardsBelowActivityPart1WithoutExp` | `education`, `certifications`, `projects`, `volunteer_experiences` |
 | `profileCardsBelowActivityPart2` | `recommendations` (`received` and `given`) |
 | `profileCardsBelowActivityPart3` | `courses`, `publications`, `test_scores`, `honors` |
-| `profileCardsBelowActivityPart4` | `languages` |
+| `profileCardsBelowActivityPart4` | `languages`, `organizations` |
+| `profileCardsBelowActivityPart6` | `causes` |
 | `profileCardsBelowActivityPart7` | `skills` |
 
 Unknown descriptors are ignored so unrelated LinkedIn UI requests can change
@@ -231,6 +236,16 @@ card even though the corresponding details page contains data:
   `profile.details.honors` pager to return the complete list. Each item keeps
   its title, issuer, displayed issue date, associated organization,
   description, and an external link when one is present.
+- Volunteer experience: Part 1 supplies a preview and a validated
+  `/details/volunteering-experiences/` link. The full detail page is parsed so
+  every visible entry is returned with role, organization, cause, dates, and
+  description rather than only the first preview rows.
+- Organizations: Part 4 supplies a preview and a validated
+  `/details/organizations/` link. The service parses the full detail page and
+  follows its embedded pager when present, preserving organization, position,
+  dates, association, and description.
+- Causes: the member-selected Causes list is extracted from its semantic Part 6
+  card and returned in display order.
 - Recommendations: Part 2 triggers a direct GET of
   `/in/<vanity>/details/recommendations/`. The service separately forwards the
   embedded `Received` and `Given` pagers and returns each entry with its type,
@@ -370,6 +385,9 @@ The response contains a `profile` object with this stable shape:
     "courses": [],
     "honors": [],
     "languages": [],
+    "volunteer_experiences": [],
+    "organizations": [],
+    "causes": [],
     "has_profile_photo_frame": false,
     "profile_images": []
   }
@@ -647,9 +665,10 @@ following current coverage:
 | Experience, education, skills, certifications, languages | Supported; these are the fields explicitly listed by the assignment |
 | Projects, recommendations, publications, test scores, courses | Supported, including detail-page pagination where LinkedIn exposes it |
 | Honors & awards | Supported, including the complete details pager |
-| Volunteer experience, patents, organizations | Detected as stable semantic component families, but no populated row was available in the audited sample; not yet normalized |
+| Volunteer experience and organizations | Supported, including full detail discovery and organization pagination |
+| Patents | Detected as a stable semantic component family, but not yet normalized |
 | Interests | Detected in Part 5, but its tabbed entity feed is not currently part of the public response |
-| Causes | Detected in Part 6 on populated profiles, but not currently part of the public response |
+| Causes | Supported from the populated Part 6 semantic card |
 | Featured content and Activity/posts | Not returned; these are feed-like, potentially large, and outside the assignment's requested profile fields |
 | Follower, connection, and mutual-connection metadata | Not normalized because visibility and wording vary by viewer and relationship |
 | Email and phone | Intentionally omitted; not exposed consistently by the tested profile payloads and no third-party enrichment is used |
@@ -666,11 +685,8 @@ payload provides a testable row contract.
 The following are deliberate gaps in the public response rather than fields the
 service claims to support:
 
-- **Volunteer experience, patents, and organizations:** good candidates for a
-  future release once populated SSR/SDUI fixtures are available. These are the
-  most useful remaining structured résumé sections.
-- **Causes:** straightforward but low priority; it is normally a short list of
-  member-selected topics.
+- **Patents:** the remaining detected structured résumé section that is not yet
+  normalized; it needs a populated payload fixture before defining its contract.
 - **Interests:** LinkedIn renders a tabbed feed containing people, companies,
   schools, groups, and newsletters. Returning it well requires a typed entity
   model and duplicate suppression across tabs.
@@ -690,8 +706,8 @@ service claims to support:
 - **Open to Work versus Hiring classification:** a profile-photo frame is
   reported, but its meaning is not guessed from image colors.
 
-If the scope is expanded, the recommended implementation order is volunteer
-experience, patents, organizations, and causes. Interests and activity should
+If the scope is expanded, the recommended implementation order starts with
+patents. Interests and activity should
 remain separate from the core profile response so they cannot make ordinary
 profile requests unbounded.
 

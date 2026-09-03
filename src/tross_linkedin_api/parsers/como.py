@@ -15,12 +15,14 @@ from tross_linkedin_api.schemas.profile import (
     Honor,
     Language,
     LinkedInProfile,
+    Organization,
     Position,
     ProfileImage,
     Project,
     Publication,
     Recommendation,
     TestScore,
+    VolunteerExperience,
 )
 
 type JSONScalar = str | int | float | bool | None
@@ -38,6 +40,7 @@ EDUCATION_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.education"
 CERTIFICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.certifications"
 COURSES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.courses"
 HONORS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.honors"
+ORGANIZATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.organizations"
 PUBLICATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.publications"
 RECOMMENDATIONS_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.recommendations"
 TEST_SCORES_PAGER_ID = "com.linkedin.sdui.pagers.profile.details.testscores"
@@ -54,11 +57,13 @@ PROFILE_DETAILS_SECTIONS = frozenset(
         "education",
         "experience",
         "honors",
+        "organizations",
         "projects",
         "publications",
         "recommendations",
         "skills",
         "test-scores",
+        "volunteering-experiences",
     }
 )
 EXPERIENCE_DATE_PATTERN = re.compile(
@@ -81,6 +86,7 @@ RECOMMENDATION_RELATIONSHIP_PATTERN = re.compile(
     r"^(?P<date>[A-Z][a-z]+ \d{1,2}, \d{4}),\s*(?P<relationship>.+)$"
 )
 CONNECTION_DEGREE_PATTERN = re.compile(r"^·\s*\d+(?:st|nd|rd|th)$")
+PROFILE_VERIFICATION_PATTERN = re.compile(r"^View .+['’]s verifications$")
 CERTIFICATION_DATE_PATTERN = re.compile(
     r"^Issued (?:(?P<start_month>[A-Z][a-z]{2}) )?(?P<start_year>\d{4})"
     r"(?: · Expires (?:(?P<end_month>[A-Z][a-z]{2}) )?"
@@ -359,6 +365,14 @@ def extract_honors_pagination_request(
     """Return the Honors & awards pager embedded in its details response."""
 
     return _extract_pagination_request(document, HONORS_PAGER_ID)
+
+
+def extract_organizations_pagination_request(
+    document: ComoFlightDocument,
+) -> SduiPaginationRequest | None:
+    """Return the Organizations pager embedded in its details response."""
+
+    return _extract_pagination_request(document, ORGANIZATIONS_PAGER_ID)
 
 
 def extract_publications_pagination_request(
@@ -792,6 +806,140 @@ def extract_honors_from_flight(document: ComoFlightDocument) -> list[Honor]:
             if item_richness > existing_richness:
                 honors[existing_index] = item
     return honors
+
+
+def extract_volunteer_experiences_from_flight(
+    document: ComoFlightDocument,
+) -> list[VolunteerExperience]:
+    """Normalize Volunteer experience rows from preview or details content."""
+
+    experiences: list[VolunteerExperience] = []
+    indexes: dict[tuple[str, str, int], int] = {}
+    section_roots = [
+        *_component_roots(document, "VolunteerExperienceTopLevel"),
+        *_component_roots(document, "VolunteerExperienceDetails"),
+    ]
+    roots: Iterable[JSONValue] = (
+        [_resolve_references(root, document) for root in section_roots]
+        if section_roots
+        else document.records.values()
+    )
+    for root in roots:
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            texts = _clean_component_text(candidate, document)
+            dated_entries = [
+                (index, parsed)
+                for index, text in enumerate(texts)
+                if (parsed := _parse_experience_dates(text)) is not None
+            ]
+            if len(dated_entries) != 1:
+                continue
+            date_index, (start_date, end_date) = dated_entries[0]
+            if date_index != 2:
+                continue
+            item = VolunteerExperience(
+                role=texts[0],
+                organization=texts[1],
+                cause=texts[3] if len(texts) > 3 else None,
+                start_date=start_date,
+                end_date=end_date,
+                description="\n".join(texts[4:]) or None,
+            )
+            identity = (
+                item.role,
+                item.organization,
+                (item.start_date.year or 0) if item.start_date else 0,
+            )
+            existing_index = indexes.get(identity)
+            if existing_index is None:
+                indexes[identity] = len(experiences)
+                experiences.append(item)
+            elif item.description and not experiences[existing_index].description:
+                experiences[existing_index] = item
+    return experiences
+
+
+def extract_organizations_from_flight(
+    document: ComoFlightDocument,
+) -> list[Organization]:
+    """Normalize Organization rows from preview or paginated details content."""
+
+    organizations: list[Organization] = []
+    indexes: dict[tuple[str, str, int], int] = {}
+    section_roots = [
+        *_component_roots(document, "organizationsTopLevelSection"),
+        *_component_roots(document, "OrganizationDetails"),
+    ]
+    roots: Iterable[JSONValue] = (
+        [_resolve_references(root, document) for root in section_roots]
+        if section_roots
+        else document.records.values()
+    )
+    for root in roots:
+        for candidate in _walk(root):
+            if not isinstance(candidate, (dict, list)):
+                continue
+            texts = _clean_component_text(candidate, document)
+            if len(texts) < 2 or " · " not in texts[1]:
+                continue
+            position, date_text = texts[1].split(" · ", maxsplit=1)
+            dates = _parse_experience_dates(date_text)
+            if dates is None:
+                continue
+            start_date, end_date = dates
+            associated_with = next(
+                (
+                    text.removeprefix("Associated with ").strip()
+                    for text in texts[2:]
+                    if text.startswith("Associated with ")
+                ),
+                None,
+            )
+            description_parts = [
+                text
+                for text in texts[2:]
+                if not text.startswith("Associated with ")
+            ]
+            item = Organization(
+                name=texts[0],
+                position=position.strip() or None,
+                start_date=start_date,
+                end_date=end_date,
+                associated_with=associated_with,
+                description="\n".join(description_parts) or None,
+            )
+            identity = (
+                item.name,
+                item.position or "",
+                (item.start_date.year or 0) if item.start_date else 0,
+            )
+            existing_index = indexes.get(identity)
+            if existing_index is None:
+                indexes[identity] = len(organizations)
+                organizations.append(item)
+            elif item.description and not organizations[existing_index].description:
+                organizations[existing_index] = item
+    return organizations
+
+
+def extract_causes_from_flight(document: ComoFlightDocument) -> list[str]:
+    """Return the member-selected Causes from the Part-6 profile card."""
+
+    causes: list[str] = []
+    for root in document.records.values():
+        for candidate in _walk(root):
+            if not _is_react_element(candidate):
+                continue
+            texts = _clean_component_text(candidate, document)
+            if len(texts) != 2 or texts[0] != "Causes":
+                continue
+            for cause in texts[1].split(" • "):
+                cleaned = cause.strip()
+                if cleaned and cleaned not in causes:
+                    causes.append(cleaned)
+    return causes
 
 
 def extract_recommendations_from_flight(
@@ -1256,7 +1404,13 @@ def extract_profile_from_como(html: str, public_identifier: str) -> LinkedInProf
         first_name=first_name,
         last_name=last_name,
         full_name=full_name,
-        headline=_find_semantic_text(values, "p", document, prefer_last=True),
+        headline=_find_semantic_text(
+            values,
+            "p",
+            document,
+            prefer_last=True,
+            exclude=PROFILE_VERIFICATION_PATTERN,
+        ),
         location=_find_contact_row_location(values, document),
         has_profile_photo_frame=any(
             "profile-framedphoto" in image.url for image in profile_images
@@ -1457,6 +1611,7 @@ def _find_semantic_text(
     document: ComoFlightDocument,
     *,
     prefer_last: bool = False,
+    exclude: re.Pattern[str] | None = None,
 ) -> str | None:
     candidates: list[str] = []
     for root in roots:
@@ -1470,7 +1625,9 @@ def _find_semantic_text(
             ):
                 texts = _visible_text(value[3].get("children"), document)
                 if texts:
-                    candidates.append(" ".join(texts).strip())
+                    candidate = " ".join(texts).strip()
+                    if exclude is None or exclude.fullmatch(candidate) is None:
+                        candidates.append(candidate)
     if not candidates:
         return None
     return candidates[-1] if prefer_last else candidates[0]

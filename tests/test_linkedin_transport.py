@@ -166,11 +166,13 @@ async def test_profile_page_uses_direct_authenticated_ssr_request() -> None:
         "education",
         "experience",
         "honors",
+        "organizations",
         "projects",
         "publications",
         "recommendations",
         "skills",
         "test-scores",
+        "volunteering-experiences",
     ],
 )
 async def test_profile_details_page_uses_validated_direct_request(section: str) -> None:

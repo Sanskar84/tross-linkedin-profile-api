@@ -11,6 +11,7 @@ from tross_linkedin_api.parsers.como import (
     SduiComponentRequest,
     SduiPaginationRequest,
     extract_about_from_flight,
+    extract_causes_from_flight,
     extract_certifications_from_flight,
     extract_certifications_pagination_request,
     extract_component_requests,
@@ -22,6 +23,8 @@ from tross_linkedin_api.parsers.como import (
     extract_honors_from_flight,
     extract_honors_pagination_request,
     extract_languages_from_flight,
+    extract_organizations_from_flight,
+    extract_organizations_pagination_request,
     extract_profile_details_path,
     extract_profile_from_como,
     extract_projects_from_flight,
@@ -35,6 +38,7 @@ from tross_linkedin_api.parsers.como import (
     extract_skills_pagination_request,
     extract_test_scores_from_flight,
     extract_test_scores_pagination_request,
+    extract_volunteer_experiences_from_flight,
     has_recommendations_section,
     parse_como_flight,
 )
@@ -44,12 +48,14 @@ from tross_linkedin_api.schemas.profile import (
     Education,
     Honor,
     LinkedInProfile,
+    Organization,
     Position,
     ProfileRequest,
     Project,
     Publication,
     Recommendation,
     TestScore,
+    VolunteerExperience,
 )
 
 
@@ -95,6 +101,9 @@ CERTIFICATIONS_SCREEN_ID = (
 )
 COURSES_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileCourseDetails"
 HONORS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileHonorDetails"
+ORGANIZATIONS_SCREEN_ID = (
+    "com.linkedin.sdui.flagshipnav.profile.ProfileOrganizationDetails"
+)
 PROJECTS_SCREEN_ID = "com.linkedin.sdui.flagshipnav.profile.ProfileProjectDetails"
 PUBLICATIONS_SCREEN_ID = (
     "com.linkedin.sdui.flagshipnav.profile.ProfilePublicationDetails"
@@ -110,6 +119,7 @@ MAX_EDUCATION_PAGES = 20
 MAX_CERTIFICATION_PAGES = 20
 MAX_COURSE_PAGES = 20
 MAX_HONORS_PAGES = 20
+MAX_ORGANIZATION_PAGES = 20
 MAX_PROJECTS_PAGES = 20
 MAX_PUBLICATION_PAGES = 20
 MAX_RECOMMENDATION_PAGES = 20
@@ -152,6 +162,7 @@ class SsrLinkedInProfileClient:
                     "profileCardsBelowActivityPart2",
                     "profileCardsBelowActivityPart3",
                     "profileCardsBelowActivityPart4",
+                    "profileCardsBelowActivityPart6",
                     "profileCardsBelowActivityPart7",
                 )
             ):
@@ -177,6 +188,29 @@ class SsrLinkedInProfileClient:
                     updates["experiences"] = preview_experiences
             elif component_id.endswith("profileCardsBelowActivityPart1WithoutExp"):
                 updates["education"] = extract_education_from_flight(component)
+                preview_volunteering = extract_volunteer_experiences_from_flight(
+                    component
+                )
+                volunteering_path = extract_profile_details_path(
+                    component,
+                    "volunteering-experiences",
+                )
+                if (
+                    volunteering_path
+                    == (
+                        f"/in/{request.public_identifier}/details/"
+                        "volunteering-experiences/"
+                    )
+                    and self._details_transport is not None
+                ):
+                    updates["volunteer_experiences"] = (
+                        await self._fetch_all_volunteer_experiences(
+                            request.public_identifier,
+                            preview_volunteering,
+                        )
+                    )
+                else:
+                    updates["volunteer_experiences"] = preview_volunteering
                 preview_certifications = extract_certifications_from_flight(component)
                 certifications_path = extract_profile_details_path(
                     component,
@@ -286,6 +320,25 @@ class SsrLinkedInProfileClient:
                     updates["test_scores"] = preview_test_scores
             elif component_id.endswith("profileCardsBelowActivityPart4"):
                 updates["languages"] = extract_languages_from_flight(component)
+                preview_organizations = extract_organizations_from_flight(component)
+                organizations_path = extract_profile_details_path(
+                    component,
+                    "organizations",
+                )
+                if (
+                    organizations_path
+                    == f"/in/{request.public_identifier}/details/organizations/"
+                    and self._details_transport is not None
+                    and self._pagination_transport is not None
+                ):
+                    updates["organizations"] = await self._fetch_all_organizations(
+                        request.public_identifier,
+                        preview_organizations,
+                    )
+                else:
+                    updates["organizations"] = preview_organizations
+            elif component_id.endswith("profileCardsBelowActivityPart6"):
+                updates["causes"] = extract_causes_from_flight(component)
             elif component_id.endswith("profileCardsBelowActivityPart7"):
                 preview_skills = extract_skills_from_flight(component)
                 details_path = extract_skills_details_path(component)
@@ -586,6 +639,61 @@ class SsrLinkedInProfileClient:
                 )
             if next_request is None:
                 return honors or inline_honors or preview_honors
+            pagination_request = next_request
+        raise LinkedInInvalidResponseError
+
+    async def _fetch_all_volunteer_experiences(
+        self,
+        public_identifier: str,
+        preview_experiences: list[VolunteerExperience],
+    ) -> list[VolunteerExperience]:
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "volunteering-experiences",
+        )
+        return (
+            extract_volunteer_experiences_from_flight(details_document)
+            or preview_experiences
+        )
+
+    async def _fetch_all_organizations(
+        self,
+        public_identifier: str,
+        preview_organizations: list[Organization],
+    ) -> list[Organization]:
+        assert self._pagination_transport is not None
+        details_document = await self._fetch_details_document(
+            public_identifier,
+            "organizations",
+        )
+        inline_organizations = extract_organizations_from_flight(details_document)
+        pagination_request = extract_organizations_pagination_request(details_document)
+        if pagination_request is None:
+            return inline_organizations or preview_organizations
+
+        organizations: list[Organization] = []
+        seen_requests: set[str] = set()
+        for _ in range(MAX_ORGANIZATION_PAGES):
+            request_key = _pagination_request_key(pagination_request)
+            if request_key in seen_requests:
+                raise LinkedInInvalidResponseError
+            seen_requests.add(request_key)
+            page = await self._pagination_transport.fetch_page(
+                pagination_request,
+                ORGANIZATIONS_SCREEN_ID,
+            )
+            page_items = extract_organizations_from_flight(page)
+            for organization in page_items:
+                if organization not in organizations:
+                    organizations.append(organization)
+            next_request = extract_organizations_pagination_request(page)
+            if next_request is None:
+                next_request = _advance_full_page_request(
+                    pagination_request,
+                    len(page_items),
+                )
+            if next_request is None:
+                return organizations or inline_organizations or preview_organizations
             pagination_request = next_request
         raise LinkedInInvalidResponseError
 

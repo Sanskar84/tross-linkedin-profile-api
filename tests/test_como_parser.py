@@ -10,6 +10,7 @@ from tross_linkedin_api.parsers.como import (
     SduiComponentRequest,
     SduiPaginationRequest,
     extract_about_from_flight,
+    extract_causes_from_flight,
     extract_certifications_from_flight,
     extract_component_requests,
     extract_courses_from_flight,
@@ -19,6 +20,8 @@ from tross_linkedin_api.parsers.como import (
     extract_honors_from_flight,
     extract_honors_pagination_request,
     extract_languages_from_flight,
+    extract_organizations_from_flight,
+    extract_organizations_pagination_request,
     extract_profile_details_path,
     extract_profile_from_como,
     extract_projects_from_flight,
@@ -32,6 +35,7 @@ from tross_linkedin_api.parsers.como import (
     extract_skills_pagination_request,
     extract_test_scores_from_flight,
     extract_test_scores_pagination_request,
+    extract_volunteer_experiences_from_flight,
     parse_como_flight,
     parse_flight_stream,
 )
@@ -1241,11 +1245,14 @@ def test_extract_profile_from_top_card_component() -> None:
         "projects": [],
         "test_scores": [],
         "publications": [],
-            "recommendations": [],
-            "certifications": [],
-            "courses": [],
-            "honors": [],
-            "languages": [],
+        "recommendations": [],
+        "certifications": [],
+        "courses": [],
+        "honors": [],
+        "languages": [],
+        "volunteer_experiences": [],
+        "organizations": [],
+        "causes": [],
         "has_profile_photo_frame": False,
         "profile_images": [
             {
@@ -1260,6 +1267,173 @@ def test_extract_profile_from_top_card_component() -> None:
             },
         ],
     }
+
+
+def test_top_card_ignores_verification_prompt_for_headline() -> None:
+    html = hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Ada","familyName":"Lovelace"}},'
+                '"children":["$L2","$L3","$L4"]}]'
+            ),
+            '2:["$","p",null,{"children":["Principal Engineer"]}]',
+            '3:["$","p",null,{"children":["View Ada’s verifications"]}]',
+            '4:["$","h2",null,{"children":["Ada Lovelace"]}]',
+        ]
+    )
+
+    profile = extract_profile_from_como(html, "ada-lovelace")
+
+    assert profile.headline == "Principal Engineer"
+
+
+def test_extract_volunteer_experiences_from_detail_rows() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","div",null,{"children":['
+                    '["$","div",null,{"children":["$L1","$L2","$L3","$L4","$L5"]}],'
+                    '["$","hr",null,{}],'
+                    '["$","div",null,{"children":["$L6","$L7","$L8","$L9"]}]]}]'
+                ),
+                '1:["$","span",null,{"children":["Coordinator"]}]',
+                '2:["$","span",null,{"children":["Student Activity Center"]}]',
+                '3:["$","span",null,{"children":["Aug 2021 - Aug 2022 · 1 yr 1 mo"]}]',
+                '4:["$","span",null,{"children":["Arts and Culture"]}]',
+                '5:["$","p",null,{"children":["Organized student events."]}]',
+                '6:["$","span",null,{"children":["Campaign volunteer"]}]',
+                '7:["$","span",null,{"children":["Care Promise"]}]',
+                '8:["$","span",null,{"children":["Oct 2014 - Nov 2014 · 2 mos"]}]',
+                '9:["$","span",null,{"children":["Health"]}]',
+            ]
+        )
+    )
+
+    assert [
+        item.model_dump() for item in extract_volunteer_experiences_from_flight(document)
+    ] == [
+        {
+            "role": "Coordinator",
+            "organization": "Student Activity Center",
+            "cause": "Arts and Culture",
+            "start_date": {"year": 2021, "month": 8},
+            "end_date": {"year": 2022, "month": 8},
+            "description": "Organized student events.",
+        },
+        {
+            "role": "Campaign volunteer",
+            "organization": "Care Promise",
+            "cause": "Health",
+            "start_date": {"year": 2014, "month": 10},
+            "end_date": {"year": 2014, "month": 11},
+            "description": None,
+        },
+    ]
+
+
+def test_extract_volunteer_experiences_resolves_semantic_root_references() -> None:
+    document = parse_flight_stream(
+        flight_stream(
+            [
+                (
+                    '0:["$","section",null,{"componentKey":'
+                    '"com.linkedin.sdui.profile.card.refVolunteerExperienceDetails",'
+                    '"children":["$L1","$L2"]}]'
+                ),
+                (
+                    '1:["$","div",null,{"children":'
+                    '["Coordinator","Student Activity Center",'
+                    '"Aug 2021 - Aug 2022 · 1 yr 1 mo","Arts and Culture"]}]'
+                ),
+                (
+                    '2:["$","div",null,{"children":'
+                    '["Campaign volunteer","Care Promise",'
+                    '"Oct 2014 - Nov 2014 · 2 mos","Health"]}]'
+                ),
+            ]
+        )
+    )
+
+    experiences = extract_volunteer_experiences_from_flight(document)
+
+    assert [item.role for item in experiences] == [
+        "Coordinator",
+        "Campaign volunteer",
+    ]
+
+
+def test_extract_organizations_causes_and_organization_pager() -> None:
+    pager = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": "com.linkedin.sdui.pagers.profile.details.organizations",
+        "requestedArguments": {
+            "payload": {
+                "vanityName": "ada-lovelace",
+                "profileId": "member-id",
+                "start": 0,
+                "count": 10,
+            }
+        },
+    }
+    organization_document = parse_flight_stream(
+        flight_stream(
+            [
+                '0:["$","div",null,{"children":["$L1","$L2","$L3","$L4"]}]',
+                '1:["$","span",null,{"children":["Computer Science Branch"]}]',
+                (
+                    '2:["$","span",null,{"children":'
+                    '["Class Representative · Sep 2019 – Mar 2023"]}]'
+                ),
+                '3:["$","span",null,{"children":["Associated with University"]}]',
+                '4:["$","p",null,{"children":["Represented two classes."]}]',
+                f"5:{json.dumps(pager)}",
+            ]
+        )
+    )
+    causes_document = parse_flight_stream(
+        flight_stream(
+            [
+                '0:["$","div",null,{"children":["$L1","$L2"]}]',
+                '1:["$","h2",null,{"children":["Causes"]}]',
+                (
+                    '2:["$","p",null,{"children":'
+                    '["Science and Technology • Education • Environment"]}]'
+                ),
+            ]
+        )
+    )
+
+    assert [
+        item.model_dump() for item in extract_organizations_from_flight(organization_document)
+    ] == [
+        {
+            "name": "Computer Science Branch",
+            "position": "Class Representative",
+            "start_date": {"year": 2019, "month": 9},
+            "end_date": {"year": 2023, "month": 3},
+            "associated_with": "University",
+            "description": "Represented two classes.",
+        }
+    ]
+    assert extract_organizations_pagination_request(
+        organization_document
+    ) == SduiPaginationRequest(
+        pager_id="com.linkedin.sdui.pagers.profile.details.organizations",
+        requested_arguments=pager["requestedArguments"],
+        raw_request=pager,
+    )
+    assert extract_causes_from_flight(causes_document) == [
+        "Science and Technology",
+        "Education",
+        "Environment",
+    ]
 
 
 def test_extract_profile_detects_generic_profile_photo_frame() -> None:
@@ -1886,6 +2060,149 @@ async def test_ssr_client_preserves_projects_when_preview_has_no_detail_link() -
     )
 
     assert [item.title for item in profile.projects] == ["Analytical Engine"]
+
+
+@pytest.mark.asyncio
+async def test_ssr_client_fetches_volunteering_organizations_and_causes() -> None:
+    profile_html = hydration_html(
+        [
+            (
+                '0:["$","main",null,{"observabilityIdentifier":'
+                '"com.linkedin.sdui.impl.profile.components.topCard",'
+                '"children":{"initialContent":"$L1"}}]'
+            ),
+            (
+                '1:["$","section",null,{"requestedArguments":{"payload":'
+                '{"givenName":"Ada","familyName":"Lovelace"}},'
+                '"requests":[{"$type":"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart1WithoutExp",'
+                '"requestedArguments":{}},{"$type":'
+                '"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart4",'
+                '"requestedArguments":{}},{"$type":'
+                '"proto.sdui.actions.core.AsyncComponentRequest",'
+                '"newComponentId":"com.linkedin.profileCardsBelowActivityPart6",'
+                '"requestedArguments":{}}]}]'
+            ),
+        ]
+    )
+    organization_pager = {
+        "$type": "proto.sdui.actions.requests.PaginationRequest",
+        "pagerId": "com.linkedin.sdui.pagers.profile.details.organizations",
+        "requestedArguments": {
+            "payload": {
+                "vanityName": "ada-lovelace",
+                "start": 0,
+                "count": 10,
+            }
+        },
+    }
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.details_calls: list[tuple[str, str]] = []
+
+        async def fetch_profile_page(self, public_identifier: str) -> ProfilePageDocument:
+            del public_identifier
+            return ProfilePageDocument(profile_html, "text/html", len(profile_html))
+
+        async def fetch_profile_details_page(
+            self,
+            public_identifier: str,
+            section: str,
+        ) -> ProfilePageDocument:
+            self.details_calls.append((public_identifier, section))
+            if section == "volunteering-experiences":
+                records = [
+                    '0:["$","div",null,{"children":["$L1","$L2","$L3","$L4"]}]',
+                    '1:["$","span",null,{"children":["Coordinator"]}]',
+                    '2:["$","span",null,{"children":["Student Center"]}]',
+                    '3:["$","span",null,{"children":["Aug 2021 - Aug 2022"]}]',
+                    '4:["$","span",null,{"children":["Arts and Culture"]}]',
+                ]
+            elif section == "organizations":
+                records = [f"0:{json.dumps(organization_pager)}"]
+            else:
+                records = ['0:["$","div",null,{"children":[]}]']
+            html = hydration_html(records)
+            return ProfilePageDocument(html, "text/html", len(html))
+
+    class FakeComponentTransport:
+        async def fetch_component(
+            self,
+            request: SduiComponentRequest,
+        ) -> ComoFlightDocument:
+            if request.component_id.endswith("Part1WithoutExp"):
+                section = "volunteering-experiences"
+                return parse_flight_stream(
+                    flight_stream(
+                        [
+                            (
+                                '0:["$","a",null,{"url":'
+                                f'"/in/ada-lovelace/details/{section}/",'
+                                '"children":["Show all volunteering"]}]'
+                            )
+                        ]
+                    )
+                )
+            if request.component_id.endswith("Part4"):
+                return parse_flight_stream(
+                    flight_stream(
+                        [
+                            (
+                                '0:["$","a",null,{"url":'
+                                '"/in/ada-lovelace/details/organizations/",'
+                                '"children":["Show all organizations"]}]'
+                            )
+                        ]
+                    )
+                )
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        '0:["$","div",null,{"children":["$L1","$L2"]}]',
+                        '1:["$","h2",null,{"children":["Causes"]}]',
+                        '2:["$","p",null,{"children":["Education • Environment"]}]',
+                    ]
+                )
+            )
+
+    class FakePaginationTransport:
+        async def fetch_page(
+            self,
+            request: SduiPaginationRequest,
+            screen_id: str,
+        ) -> ComoFlightDocument:
+            assert request.pager_id.endswith(".organizations")
+            assert screen_id.endswith(".ProfileOrganizationDetails")
+            return parse_flight_stream(
+                flight_stream(
+                    [
+                        '0:["$","div",null,{"children":["$L1","$L2"]}]',
+                        '1:["$","span",null,{"children":["Computing Society"]}]',
+                        (
+                            '2:["$","span",null,{"children":'
+                            '["President · Sep 2020 – Mar 2021"]}]'
+                        ),
+                    ]
+                )
+            )
+
+    transport = FakeTransport()
+    profile = await SsrLinkedInProfileClient(
+        transport,
+        FakeComponentTransport(),
+        transport,
+        FakePaginationTransport(),
+    ).fetch_profile(
+        ProfileRequest(profile_url="https://www.linkedin.com/in/ada-lovelace/")
+    )
+
+    assert [item.role for item in profile.volunteer_experiences] == ["Coordinator"]
+    assert [item.name for item in profile.organizations] == ["Computing Society"]
+    assert profile.causes == ["Education", "Environment"]
+    assert ("ada-lovelace", "volunteering-experiences") in transport.details_calls
+    assert ("ada-lovelace", "organizations") in transport.details_calls
 
 
 @pytest.mark.asyncio

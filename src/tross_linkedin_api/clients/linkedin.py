@@ -99,11 +99,13 @@ PROFILE_DETAILS_SECTIONS = frozenset(
         "education",
         "experience",
         "honors",
+        "organizations",
         "projects",
         "publications",
         "recommendations",
         "skills",
         "test-scores",
+        "volunteering-experiences",
     }
 )
 SDUI_IDENTIFIER_PATTERN = re.compile(r"com\.linkedin\.sdui\.[A-Za-z0-9_.]+")

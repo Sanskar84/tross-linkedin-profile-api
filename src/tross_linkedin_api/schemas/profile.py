@@ -85,6 +85,24 @@ class Honor(BaseModel):
     url: str | None = None
 
 
+class VolunteerExperience(BaseModel):
+    role: str
+    organization: str
+    cause: str | None = None
+    start_date: DateParts | None = None
+    end_date: DateParts | None = None
+    description: str | None = None
+
+
+class Organization(BaseModel):
+    name: str
+    position: str | None = None
+    start_date: DateParts | None = None
+    end_date: DateParts | None = None
+    associated_with: str | None = None
+    description: str | None = None
+
+
 class Language(BaseModel):
     name: str
     proficiency: str | None = None
@@ -149,6 +167,9 @@ class LinkedInProfile(BaseModel):
     certifications: list[Certification] = Field(default_factory=list)
     courses: list[Course] = Field(default_factory=list)
     honors: list[Honor] = Field(default_factory=list)
+    volunteer_experiences: list[VolunteerExperience] = Field(default_factory=list)
+    organizations: list[Organization] = Field(default_factory=list)
+    causes: list[str] = Field(default_factory=list)
     languages: list[Language] = Field(default_factory=list)
     has_profile_photo_frame: bool = False
     profile_images: list[ProfileImage] = Field(default_factory=list)
